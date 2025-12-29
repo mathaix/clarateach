@@ -1,0 +1,38 @@
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clarateach-workspace
+    hostname: workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      # Persist workspace files
+      - workspace-data:/workspace
+      # Mount server code for development (will be added in Story 1.2)
+      # - ./server:/home/learner/server
+    ports:
+      # Workspace server
+      - "3000:3000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - WORKSPACE_DIR=/workspace
+      - TERM=xterm-256color
+    networks:
+      - clarateach-net
+    # Keep container running
+    command: bash
+
+  # neko browser preview (will be configured in Story 1.3)
+  # neko:
+  #   image: m1k1o/neko:firefox
+  #   ...
+
+volumes:
+  workspace-data:
+    driver: local
+
+networks:
+  clarateach-net:
+    driver: bridge
