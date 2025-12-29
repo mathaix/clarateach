@@ -47,6 +47,14 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
 # Install Claude CLI globally (as root, before switching user)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Install pino-pretty for log formatting
+RUN npm install -g pino-pretty
+
+# Copy server code and install dependencies (as root for node-pty build)
+COPY --chown=learner:learner server /home/learner/server
+WORKDIR /home/learner/server
+RUN npm install && npm run build
+
 # Switch to non-root user
 USER learner
 WORKDIR /home/learner
