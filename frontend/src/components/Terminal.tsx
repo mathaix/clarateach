@@ -52,6 +52,9 @@ export function Terminal() {
     xterm.open(terminalRef.current);
     fitAddon.fit();
 
+    // Focus terminal to receive input
+    xterm.focus();
+
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
@@ -136,7 +139,11 @@ export function Terminal() {
       </div>
 
       {/* Terminal Content */}
-      <div ref={terminalRef} className="flex-1 p-2" />
+      <div
+        ref={terminalRef}
+        className="flex-1 p-2 cursor-text"
+        onClick={() => xtermRef.current?.focus()}
+      />
     </div>
   );
 }

@@ -36,6 +36,9 @@ services:
       NEKO_PASSWORD_ADMIN: "admin"
       NEKO_EPR: "52000-52100"
       NEKO_ICELITE: "true"
+      # Control settings
+      NEKO_CONTROL_PROTECTION: "false"
+      NEKO_IMPLICIT_CONTROL: "true"
     ports:
       # neko web UI
       - "8080:8080"

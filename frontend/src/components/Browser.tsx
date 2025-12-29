@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { Globe, RefreshCw, ExternalLink } from 'lucide-react';
 
 export function Browser() {
-  const [nekoUrl] = useState(`http://${window.location.hostname}:8080`);
+  // neko URL with auto-login parameters
+  const [nekoUrl] = useState(
+    `http://${window.location.hostname}:8080/?usr=learner&pwd=neko`
+  );
 
   const handleRefresh = () => {
     const iframe = document.getElementById('neko-frame') as HTMLIFrameElement;
@@ -55,10 +58,10 @@ export function Browser() {
       {/* Info bar */}
       <div className="bg-vscode-sidebar border-t border-vscode-border px-4 py-1 flex items-center justify-between flex-shrink-0">
         <span className="text-xs text-gray-500">
-          neko browser • password: neko
+          neko browser • auto-login as "learner"
         </span>
         <span className="text-xs text-gray-500">
-          {nekoUrl}
+          localhost:8080
         </span>
       </div>
     </div>

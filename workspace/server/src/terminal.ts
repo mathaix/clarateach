@@ -13,9 +13,9 @@ export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: s
   fastify.get('/terminal', { websocket: true }, (socket: WebSocket) => {
     fastify.log.info('Terminal WebSocket connected');
 
-    // Spawn a PTY shell
-    const shell = process.env.SHELL || 'bash';
-    const ptyProcess = pty.spawn(shell, [], {
+    // Spawn a PTY shell with interactive login
+    const shell = process.env.SHELL || '/bin/bash';
+    const ptyProcess = pty.spawn(shell, ['--login'], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
@@ -23,6 +23,8 @@ export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: s
       env: {
         ...process.env,
         TERM: 'xterm-256color',
+        // Ensure bash knows it's interactive
+        PS1: '\\u@\\h:\\w\\$ ',
       },
     });
 
