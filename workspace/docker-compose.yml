@@ -23,10 +23,28 @@ services:
     # Start the workspace server
     command: node /home/learner/server/dist/index.js
 
-  # neko browser preview (will be configured in Story 1.3)
-  # neko:
-  #   image: m1k1o/neko:firefox
-  #   ...
+  # neko browser preview
+  # Note: neko only supports amd64, uses QEMU emulation on ARM Macs
+  neko:
+    image: m1k1o/neko:firefox
+    platform: linux/amd64
+    container_name: clarateach-neko
+    shm_size: "2gb"
+    environment:
+      NEKO_SCREEN: "1280x720@30"
+      NEKO_PASSWORD: "neko"
+      NEKO_PASSWORD_ADMIN: "admin"
+      NEKO_EPR: "52000-52100"
+      NEKO_ICELITE: "true"
+    ports:
+      # neko web UI
+      - "8080:8080"
+      # WebRTC UDP ports
+      - "52000-52100:52000-52100/udp"
+    networks:
+      - clarateach-net
+    cap_add:
+      - SYS_ADMIN
 
 volumes:
   workspace-data:
