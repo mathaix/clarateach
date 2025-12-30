@@ -1,0 +1,21 @@
+{
+  "name": "@clarateach/integration-tests",
+  "version": "0.1.0",
+  "description": "ClaraTeach full integration tests",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "ws": "^8.18.0",
+    "@types/ws": "^8.5.13"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

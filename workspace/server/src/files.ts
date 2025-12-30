@@ -1,13 +1,15 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { authMiddleware } from './middleware/auth.js';
+import { enforceSeatAccess } from './middleware/seat.js';
 
 interface FileInfo {
   name: string;
   path: string;
-  isDirectory: boolean;
+  is_directory: boolean;
   size: number;
-  modifiedAt: string;
+  modified_at: string;
 }
 
 interface FileContent {
@@ -15,12 +17,90 @@ interface FileContent {
   encoding: 'utf-8' | 'base64';
 }
 
-// Ensure path is within workspace directory (prevent path traversal)
-function resolveSafePath(workspaceDir: string, requestedPath: string): string | null {
-  const resolved = path.resolve(workspaceDir, requestedPath);
-  if (!resolved.startsWith(workspaceDir)) {
+function isSubPath(parent: string, target: string): boolean {
+  const relative = path.relative(parent, target);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function normalizeRequestedPath(workspaceDir: string, requestedPath: string): string | null {
+  const trimmed = requestedPath.trim();
+  if (trimmed === '' || trimmed === '/') {
+    return '';
+  }
+
+  if (path.isAbsolute(trimmed)) {
+    const relative = path.relative(workspaceDir, trimmed);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      return null;
+    }
+    return relative;
+  }
+
+  if (trimmed === 'workspace') {
+    return '';
+  }
+
+  if (trimmed.startsWith('workspace/')) {
+    return trimmed.slice('workspace/'.length);
+  }
+
+  return trimmed;
+}
+
+// Ensure path is within workspace directory (prevent path traversal + symlink escape)
+async function resolveSafePath(workspaceDir: string, requestedPath: string): Promise<string | null> {
+  const normalized = normalizeRequestedPath(workspaceDir, requestedPath);
+  if (normalized === null) {
     return null;
   }
+
+  const resolved = path.resolve(workspaceDir, normalized);
+  const realWorkspace = await fs.realpath(workspaceDir);
+
+  // If resolved path IS the workspace directory, allow it
+  if (resolved === workspaceDir) {
+    return resolved;
+  }
+
+  const resolvedParent = path.dirname(resolved);
+
+  let realParent = resolvedParent;
+  try {
+    let probePath = resolvedParent;
+    while (true) {
+      try {
+        realParent = await fs.realpath(probePath);
+        break;
+      } catch (err: any) {
+        if (err?.code !== 'ENOENT') {
+          throw err;
+        }
+        const parent = path.dirname(probePath);
+        if (parent === probePath) {
+          return null;
+        }
+        probePath = parent;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  if (!isSubPath(realWorkspace, realParent)) {
+    return null;
+  }
+
+  try {
+    const realTarget = await fs.realpath(resolved);
+    if (!isSubPath(realWorkspace, realTarget)) {
+      return null;
+    }
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') {
+      throw err;
+    }
+  }
+
   return resolved;
 }
 
@@ -29,6 +109,7 @@ function isBinaryFile(filename: string): boolean {
   const binaryExtensions = [
     '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp',
     '.pdf', '.zip', '.tar', '.gz', '.7z', '.rar',
+    '.bin',
     '.exe', '.dll', '.so', '.dylib',
     '.mp3', '.mp4', '.wav', '.avi', '.mov',
     '.woff', '.woff2', '.ttf', '.otf', '.eot',
@@ -38,11 +119,17 @@ function isBinaryFile(filename: string): boolean {
 }
 
 export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: string) {
-  // List directory contents
-  fastify.get('/files', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { path: dirPath = '' } = request.query as { path?: string };
+  // Apply auth middleware to all file routes
+  const seatGuard = async (request: FastifyRequest, reply: FastifyReply) => {
+    enforceSeatAccess(request, reply);
+  };
+  const authHook = { preHandler: [authMiddleware, seatGuard] };
 
-    const safePath = resolveSafePath(workspaceDir, dirPath);
+  // List directory contents
+  fastify.get('/vm/:seat/files', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
+    const { path: dirPath = workspaceDir } = request.query as { path?: string };
+
+    const safePath = await resolveSafePath(workspaceDir, dirPath);
     if (!safePath) {
       return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'Path outside workspace' } });
     }
@@ -57,18 +144,18 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
 
           return {
             name: entry.name,
-            path: relativePath,
-            isDirectory: entry.isDirectory(),
+            path: path.join(workspaceDir, relativePath),
+            is_directory: entry.isDirectory(),
             size: stats.size,
-            modifiedAt: stats.mtime.toISOString(),
+            modified_at: stats.mtime.toISOString(),
           };
         })
       );
 
       // Sort: directories first, then alphabetically
       files.sort((a, b) => {
-        if (a.isDirectory !== b.isDirectory) {
-          return a.isDirectory ? -1 : 1;
+        if (a.is_directory !== b.is_directory) {
+          return a.is_directory ? -1 : 1;
         }
         return a.name.localeCompare(b.name);
       });
@@ -83,14 +170,14 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
   });
 
   // Read file contents
-  fastify.get('/files/*', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get('/vm/:seat/files/*', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const filePath = (request.params as { '*': string })['*'];
 
     if (!filePath) {
       return reply.status(400).send({ error: { code: 'INVALID_INPUT', message: 'File path required' } });
     }
 
-    const safePath = resolveSafePath(workspaceDir, filePath);
+    const safePath = await resolveSafePath(workspaceDir, filePath);
     if (!safePath) {
       return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'Path outside workspace' } });
     }
@@ -120,14 +207,14 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
   });
 
   // Write file contents
-  fastify.put('/files/*', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.put('/vm/:seat/files/*', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const filePath = (request.params as { '*': string })['*'];
 
     if (!filePath) {
       return reply.status(400).send({ error: { code: 'INVALID_INPUT', message: 'File path required' } });
     }
 
-    const safePath = resolveSafePath(workspaceDir, filePath);
+    const safePath = await resolveSafePath(workspaceDir, filePath);
     if (!safePath) {
       return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'Path outside workspace' } });
     }
@@ -136,6 +223,9 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
 
     if (typeof body.content !== 'string') {
       return reply.status(400).send({ error: { code: 'INVALID_INPUT', message: 'Content required' } });
+    }
+    if (body.encoding && body.encoding !== 'utf-8' && body.encoding !== 'base64') {
+      return reply.status(400).send({ error: { code: 'INVALID_INPUT', message: 'Unsupported encoding' } });
     }
 
     try {
@@ -159,20 +249,20 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
   });
 
   // Delete file or directory
-  fastify.delete('/files/*', async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.delete('/vm/:seat/files/*', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const filePath = (request.params as { '*': string })['*'];
 
     if (!filePath) {
       return reply.status(400).send({ error: { code: 'INVALID_INPUT', message: 'File path required' } });
     }
 
-    const safePath = resolveSafePath(workspaceDir, filePath);
+    const safePath = await resolveSafePath(workspaceDir, filePath);
     if (!safePath) {
       return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'Path outside workspace' } });
     }
 
     // Prevent deleting the workspace root
-    if (safePath === workspaceDir) {
+    if (path.resolve(safePath) === path.resolve(workspaceDir)) {
       return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'Cannot delete workspace root' } });
     }
 

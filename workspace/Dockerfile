@@ -75,8 +75,8 @@ ENV PATH="/home/learner/.local/bin:/home/learner/.npm-global/bin:${PATH}"
 ENV WORKSPACE_DIR=/workspace
 ENV TERM=xterm-256color
 
-# Expose workspace server port
-EXPOSE 3000
+# Expose workspace server ports
+EXPOSE 3001 3002
 
 # Default command - start tmux session
 ENTRYPOINT ["/home/learner/entrypoint.sh"]

@@ -1,0 +1,122 @@
+# Local development setup with 3 learner containers
+# Usage: docker-compose -f docker-compose.local.yml up -d
+
+services:
+  # Seat 1
+  workspace-1:
+    build: .
+    image: clarateach-workspace
+    container_name: clarateach-seat-1
+    volumes:
+      - seat1-data:/workspace
+    ports:
+      - "3001:3001"
+      - "3002:3002"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - WORKSPACE_DIR=/workspace
+      - AUTH_DISABLED=true
+      - SEAT=1
+      - CONTAINER_ID=c-01
+      - TERMINAL_PORT=3001
+      - FILES_PORT=3002
+    networks:
+      - clarateach-local
+    labels:
+      - "clarateach.seat=1"
+    command: node /home/learner/server/dist/index.js
+
+  # Seat 2
+  workspace-2:
+    build: .
+    image: clarateach-workspace
+    container_name: clarateach-seat-2
+    volumes:
+      - seat2-data:/workspace
+    ports:
+      - "3003:3001"
+      - "3004:3002"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - WORKSPACE_DIR=/workspace
+      - AUTH_DISABLED=true
+      - SEAT=2
+      - CONTAINER_ID=c-02
+      - TERMINAL_PORT=3001
+      - FILES_PORT=3002
+    networks:
+      - clarateach-local
+    labels:
+      - "clarateach.seat=2"
+    command: node /home/learner/server/dist/index.js
+
+  # Seat 3
+  workspace-3:
+    build: .
+    image: clarateach-workspace
+    container_name: clarateach-seat-3
+    volumes:
+      - seat3-data:/workspace
+    ports:
+      - "3005:3001"
+      - "3006:3002"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - WORKSPACE_DIR=/workspace
+      - AUTH_DISABLED=true
+      - SEAT=3
+      - CONTAINER_ID=c-03
+      - TERMINAL_PORT=3001
+      - FILES_PORT=3002
+    networks:
+      - clarateach-local
+    labels:
+      - "clarateach.seat=3"
+    command: node /home/learner/server/dist/index.js
+
+  # Caddy reverse proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: clarateach-caddy
+    ports:
+      - "8000:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - clarateach-local
+    depends_on:
+      - workspace-1
+      - workspace-2
+      - workspace-3
+      - neko
+
+  # Shared neko browser (all seats share one browser for local dev)
+  neko:
+    image: m1k1o/neko:firefox
+    platform: linux/amd64
+    container_name: clarateach-neko-local
+    shm_size: "2gb"
+    environment:
+      NEKO_SCREEN: "1280x720@30"
+      NEKO_PASSWORD: "neko"
+      NEKO_PASSWORD_ADMIN: "admin"
+      NEKO_EPR: "52000-52100"
+      NEKO_ICELITE: "true"
+      NEKO_CONTROL_PROTECTION: "false"
+      NEKO_IMPLICIT_CONTROL: "true"
+    ports:
+      - "8080:8080"
+      - "52000-52100:52000-52100/udp"
+    networks:
+      - clarateach-local
+    cap_add:
+      - SYS_ADMIN
+
+volumes:
+  seat1-data:
+  seat2-data:
+  seat3-data:
+
+networks:
+  clarateach-local:
+    driver: bridge

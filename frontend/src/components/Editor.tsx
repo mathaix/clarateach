@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
 import { Code, Folder, FileText, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react';
+import { getWorkspaceSession } from '../lib/workspaceSession';
 
 interface FileInfo {
   name: string;
   path: string;
-  isDirectory: boolean;
+  is_directory: boolean;
   size: number;
-  modifiedAt: string;
+  modified_at: string;
 }
 
 interface FileTreeItemProps {
@@ -24,7 +25,7 @@ function FileTreeItem({ file, depth, onSelect, selectedPath, onLoadChildren }: F
   const [loading, setLoading] = useState(false);
 
   const handleClick = async () => {
-    if (file.isDirectory) {
+    if (file.is_directory) {
       if (!isOpen && children.length === 0) {
         setLoading(true);
         try {
@@ -52,14 +53,14 @@ function FileTreeItem({ file, depth, onSelect, selectedPath, onLoadChildren }: F
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
       >
-        {file.isDirectory && (
+        {file.is_directory && (
           isOpen ? (
             <ChevronDown className="w-3 h-3 text-vscode-text flex-shrink-0" />
           ) : (
             <ChevronRight className="w-3 h-3 text-vscode-text flex-shrink-0" />
           )
         )}
-        {file.isDirectory ? (
+        {file.is_directory ? (
           <Folder className="w-4 h-4 text-yellow-500 flex-shrink-0" />
         ) : (
           <FileText className="w-4 h-4 text-vscode-text flex-shrink-0" />
@@ -67,7 +68,7 @@ function FileTreeItem({ file, depth, onSelect, selectedPath, onLoadChildren }: F
         <span className="text-sm text-vscode-text truncate">{file.name}</span>
         {loading && <RefreshCw className="w-3 h-3 text-vscode-text animate-spin" />}
       </div>
-      {file.isDirectory && isOpen && children.map((child) => (
+      {file.is_directory && isOpen && children.map((child) => (
         <FileTreeItem
           key={child.path}
           file={child}
@@ -88,29 +89,68 @@ export function Editor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const API_BASE = `http://${window.location.hostname}:3000`;
+  const session = getWorkspaceSession();
+  const API_BASE = session ? `${session.endpoint}/vm/${session.seat}` : '';
+
+  const getHeaders = (extra?: Record<string, string>): Record<string, string> => {
+    const headers: Record<string, string> = { ...extra };
+    if (session?.token) {
+      headers['Authorization'] = `Bearer ${session.token}`;
+    }
+    return headers;
+  };
+
+  const encodePath = (filePath: string): string =>
+    filePath.split('/').map(segment => encodeURIComponent(segment)).join('/');
+
+  const parseJson = async <T,>(response: Response): Promise<T> => {
+    const text = await response.text();
+    if (!text) {
+      throw new Error('Empty response from workspace');
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error('Invalid JSON response from workspace');
+    }
+  };
 
   const loadDirectory = async (path: string = ''): Promise<FileInfo[]> => {
     const url = path ? `${API_BASE}/files?path=${encodeURIComponent(path)}` : `${API_BASE}/files`;
-    const response = await fetch(url);
-    const data = await response.json();
+    const response = await fetch(url, {
+      headers: getHeaders(),
+    });
+    const data = await parseJson<{ files?: FileInfo[]; error?: { message?: string } }>(response);
+    if (!response.ok) {
+      throw new Error(data.error?.message || `Request failed (${response.status})`);
+    }
     return data.files || [];
   };
 
   useEffect(() => {
+    if (!API_BASE) {
+      setLoading(false);
+      return;
+    }
     loadDirectory()
       .then(setFiles)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [API_BASE]);
 
   const handleFileSelect = async (file: FileInfo) => {
-    if (file.isDirectory) return;
+    if (file.is_directory) return;
 
     setSelectedFile(file);
     try {
-      const response = await fetch(`${API_BASE}/files/${file.path}`);
-      const data = await response.json();
+      const filePath = file.path.startsWith('/') ? file.path.slice(1) : file.path;
+      const response = await fetch(`${API_BASE}/files/${encodePath(filePath)}`, {
+        headers: getHeaders(),
+      });
+      const data = await parseJson<{ content?: string; error?: { message?: string } }>(response);
+      if (!response.ok) {
+        throw new Error(data.error?.message || `Request failed (${response.status})`);
+      }
       setContent(data.content || '');
     } catch (err) {
       console.error('Failed to load file:', err);
@@ -122,11 +162,16 @@ export function Editor() {
 
     setSaving(true);
     try {
-      await fetch(`${API_BASE}/files/${selectedFile.path}`, {
+      const filePath = selectedFile.path.startsWith('/') ? selectedFile.path.slice(1) : selectedFile.path;
+      const response = await fetch(`${API_BASE}/files/${encodePath(filePath)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ content }),
       });
+      if (!response.ok) {
+        const data = await parseJson<{ error?: { message?: string } }>(response);
+        throw new Error(data.error?.message || `Request failed (${response.status})`);
+      }
     } catch (err) {
       console.error('Failed to save file:', err);
     }
@@ -181,7 +226,11 @@ export function Editor() {
           <div className="px-3 py-2 text-xs text-vscode-text uppercase tracking-wider">
             Explorer
           </div>
-          {loading ? (
+          {!session ? (
+            <div className="px-3 py-2 text-sm text-vscode-text">
+              Missing workspace session
+            </div>
+          ) : loading ? (
             <div className="px-3 py-2 text-sm text-vscode-text">Loading...</div>
           ) : files.length === 0 ? (
             <div className="px-3 py-2 text-sm text-vscode-text">No files</div>

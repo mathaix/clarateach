@@ -4,26 +4,27 @@ import cors from '@fastify/cors';
 import { registerTerminalRoutes } from './terminal.js';
 import { registerFileRoutes } from './files.js';
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || '3001', 10);
+const FILES_PORT = parseInt(process.env.FILES_PORT || '3002', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace';
 
-async function main() {
+async function buildServer(enableWebsocket: boolean) {
   const fastify = Fastify({
     logger: {
       level: 'info',
     },
   });
 
-  // Register plugins
   await fastify.register(cors, {
     origin: true,
     credentials: true,
   });
 
-  await fastify.register(websocket);
+  if (enableWebsocket) {
+    await fastify.register(websocket);
+  }
 
-  // Add content type parser for JSON
   fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
     try {
       const json = JSON.parse(body as string);
@@ -33,22 +34,28 @@ async function main() {
     }
   });
 
-  // Health check endpoint
   fastify.get('/health', async () => {
     return { status: 'ok', workspace: WORKSPACE_DIR };
   });
 
-  // Register routes
-  registerTerminalRoutes(fastify, WORKSPACE_DIR);
-  registerFileRoutes(fastify, WORKSPACE_DIR);
+  return fastify;
+}
 
-  // Start server
+async function main() {
+  const terminalServer = await buildServer(true);
+  registerTerminalRoutes(terminalServer, WORKSPACE_DIR);
+
+  const fileServer = await buildServer(false);
+  registerFileRoutes(fileServer, WORKSPACE_DIR);
+
   try {
-    await fastify.listen({ port: PORT, host: HOST });
-    console.log(`Workspace server running at http://${HOST}:${PORT}`);
+    await terminalServer.listen({ port: TERMINAL_PORT, host: HOST });
+    console.log(`Workspace terminal server running at http://${HOST}:${TERMINAL_PORT}`);
+    await fileServer.listen({ port: FILES_PORT, host: HOST });
+    console.log(`Workspace file server running at http://${HOST}:${FILES_PORT}`);
     console.log(`Workspace directory: ${WORKSPACE_DIR}`);
   } catch (err) {
-    fastify.log.error(err);
+    terminalServer.log.error(err);
     process.exit(1);
   }
 }

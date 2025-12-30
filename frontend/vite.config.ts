@@ -2,6 +2,9 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+const PORTAL_PORT = process.env.PORTAL_PORT ?? '3000';
+const FRONTEND_PORT = parseInt(process.env.FRONTEND_PORT ?? '5173', 10);
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -10,15 +13,15 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: FRONTEND_PORT,
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: `http://localhost:8080`,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
       },
-      '/terminal': {
-        target: 'ws://localhost:3000',
+      '/debug/proxy': {
+        target: `http://localhost:8080`,
+        changeOrigin: true,
         ws: true,
       },
     },

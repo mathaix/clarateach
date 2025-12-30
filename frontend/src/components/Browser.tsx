@@ -1,11 +1,17 @@
-import { useState } from 'react';
 import { Globe, RefreshCw, ExternalLink } from 'lucide-react';
+import { getWorkspaceSession } from '../lib/workspaceSession';
 
 export function Browser() {
-  // neko URL with auto-login parameters
-  const [nekoUrl] = useState(
-    `http://${window.location.hostname}:8080/?usr=learner&pwd=neko`
-  );
+  const session = getWorkspaceSession();
+  let baseUrl = '';
+  if (session) {
+    // Check if endpoint has a path (debug proxy)
+    const url = new URL(session.endpoint);
+    const basePath = url.pathname === '/' ? '' : url.pathname;
+    baseUrl = `${url.origin}${basePath}/vm/${session.seat}/browser`;
+  }
+  const tokenParam = session?.token ? `?token=${encodeURIComponent(session.token)}` : '';
+  const browserUrl = `${baseUrl}${tokenParam}`;
 
   const handleRefresh = () => {
     const iframe = document.getElementById('neko-frame') as HTMLIFrameElement;
@@ -15,7 +21,7 @@ export function Browser() {
   };
 
   const handleOpenExternal = () => {
-    window.open(nekoUrl, '_blank');
+    window.open(browserUrl, '_blank');
   };
 
   return (
@@ -44,11 +50,11 @@ export function Browser() {
         </div>
       </div>
 
-      {/* neko iframe */}
+      {/* Browser iframe */}
       <div className="flex-1 bg-black">
         <iframe
           id="neko-frame"
-          src={nekoUrl}
+          src={browserUrl}
           className="w-full h-full border-0"
           allow="autoplay; clipboard-read; clipboard-write"
           title="Browser Preview"
@@ -58,10 +64,10 @@ export function Browser() {
       {/* Info bar */}
       <div className="bg-vscode-sidebar border-t border-vscode-border px-4 py-1 flex items-center justify-between flex-shrink-0">
         <span className="text-xs text-gray-500">
-          neko browser • auto-login as "learner"
+          neko browser preview
         </span>
         <span className="text-xs text-gray-500">
-          localhost:8080
+          {session ? session.endpoint : 'missing workspace session'}
         </span>
       </div>
     </div>

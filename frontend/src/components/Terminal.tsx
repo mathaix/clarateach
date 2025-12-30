@@ -3,6 +3,7 @@ import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { WebLinksAddon } from 'xterm-addon-web-links';
 import { Terminal as TerminalIcon } from 'lucide-react';
+import { getWorkspaceSession } from '../lib/workspaceSession';
 import 'xterm/css/xterm.css';
 
 export function Terminal() {
@@ -10,6 +11,10 @@ export function Terminal() {
   const xtermRef = useRef<XTerm | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+
+  const focusTerminal = () => {
+    xtermRef.current?.focus();
+  };
 
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -53,51 +58,62 @@ export function Terminal() {
     fitAddon.fit();
 
     // Focus terminal to receive input
-    xterm.focus();
+    focusTerminal();
 
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
-    // Connect to WebSocket
-    const wsUrl = `ws://${window.location.hostname}:3000/terminal`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    const session = getWorkspaceSession();
+    let ws: WebSocket | null = null;
 
-    ws.onopen = () => {
-      console.log('Terminal WebSocket connected');
-      // Send initial resize
-      ws.send(JSON.stringify({
-        type: 'resize',
-        cols: xterm.cols,
-        rows: xterm.rows,
-      }));
-    };
+    if (!session) {
+      xterm.write('\r\n\x1b[31mMissing workspace session. Provide token/seat/endpoint.\x1b[0m\r\n');
+    } else {
+      const endpointUrl = new URL(session.endpoint);
+      const wsProtocol = endpointUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      const tokenParam = session.token ? `?token=${encodeURIComponent(session.token)}` : '';
+      // Ensure we keep the pathname (e.g. /debug/proxy/ws-id)
+      const basePath = endpointUrl.pathname === '/' ? '' : endpointUrl.pathname;
+      const wsUrl = `${wsProtocol}//${endpointUrl.host}${basePath}/vm/${session.seat}/terminal${tokenParam}`;
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'output') {
-          xterm.write(msg.data);
+      ws.onopen = () => {
+        console.log('Terminal WebSocket connected');
+        // Send initial resize
+        ws?.send(JSON.stringify({
+          type: 'resize',
+          cols: xterm.cols,
+          rows: xterm.rows,
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'output') {
+            xterm.write(msg.data);
+          }
+        } catch {
+          // Handle raw data
+          xterm.write(event.data);
         }
-      } catch {
-        // Handle raw data
-        xterm.write(event.data);
-      }
-    };
+      };
 
-    ws.onerror = (error) => {
-      console.error('Terminal WebSocket error:', error);
-      xterm.write('\r\n\x1b[31mConnection error. Is the workspace server running?\x1b[0m\r\n');
-    };
+      ws.onerror = (error) => {
+        console.error('Terminal WebSocket error:', error);
+        xterm.write('\r\n\x1b[31mConnection error. Is the workspace server running?\x1b[0m\r\n');
+      };
 
-    ws.onclose = () => {
-      console.log('Terminal WebSocket closed');
-      xterm.write('\r\n\x1b[33mConnection closed.\x1b[0m\r\n');
-    };
+      ws.onclose = () => {
+        console.log('Terminal WebSocket closed');
+        xterm.write('\r\n\x1b[33mConnection closed.\x1b[0m\r\n');
+      };
+    }
 
     // Handle terminal input
     xterm.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
@@ -105,7 +121,7 @@ export function Terminal() {
     // Handle resize
     const handleResize = () => {
       fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'resize',
           cols: xterm.cols,
@@ -125,8 +141,12 @@ export function Terminal() {
     return () => {
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
-      ws.close();
+      ws?.close();
       xterm.dispose();
+      // Reset refs so effect can re-run after Strict Mode remount
+      xtermRef.current = null;
+      wsRef.current = null;
+      fitAddonRef.current = null;
     };
   }, []);
 
@@ -142,7 +162,16 @@ export function Terminal() {
       <div
         ref={terminalRef}
         className="flex-1 p-2 cursor-text"
-        onClick={() => xtermRef.current?.focus()}
+        tabIndex={0}
+        onClick={focusTerminal}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          focusTerminal();
+        }}
+        onTouchStart={(event) => {
+          event.preventDefault();
+          focusTerminal();
+        }}
       />
     </div>
   );

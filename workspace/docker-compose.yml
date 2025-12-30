@@ -1,8 +1,25 @@
 services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: clarateach-caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_PORT:-8000}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - clarateach-net
+    depends_on:
+      - workspace
+      - neko
+
   workspace:
     build:
       context: .
       dockerfile: Dockerfile
+    image: clarateach-workspace
     container_name: clarateach-workspace
     hostname: workspace
     stdin_open: true
@@ -10,16 +27,25 @@ services:
     volumes:
       # Persist workspace files
       - workspace-data:/workspace
-    ports:
-      # Workspace server
-      - "3000:3000"
+    expose:
+      # Internal ports only - Caddy proxies to these
+      - "3001"
+      - "3002"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - WORKSPACE_DIR=/workspace
       - TERM=xterm-256color
-      - PORT=3000
+      - TERMINAL_PORT=3001
+      - FILES_PORT=3002
+      - SEAT=1
+      - CONTAINER_ID=c-01
+      # JWT Authentication (set AUTH_DISABLED=true for local development)
+      - AUTH_DISABLED=${AUTH_DISABLED:-true}
+      - JWKS_URL=${JWKS_URL:-}
     networks:
-      - clarateach-net
+      clarateach-net:
+        aliases:
+          - workspace-1
     # Start the workspace server
     command: node /home/learner/server/dist/index.js
 
@@ -51,6 +77,10 @@ services:
 
 volumes:
   workspace-data:
+    driver: local
+  caddy-data:
+    driver: local
+  caddy-config:
     driver: local
 
 networks:

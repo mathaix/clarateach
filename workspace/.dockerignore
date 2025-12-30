@@ -1,4 +1,5 @@
 # Dependencies
+**/node_modules/
 node_modules/
 __pycache__/
 *.pyc
@@ -24,6 +25,11 @@ docker-compose*.yml
 # Documentation
 *.md
 docs/
+
+# Tests
+*.test.ts
+*.spec.ts
+vitest.config.ts
 
 # Environment files (secrets)
 .env

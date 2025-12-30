@@ -1,6 +1,8 @@
-import type { FastifyInstance } from 'fastify';
-import * as pty from 'node-pty';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { WebSocket } from 'ws';
+import * as pty from 'node-pty';
+import { wsAuthMiddleware, AuthenticatedRequest } from './middleware/auth.js';
+import { enforceSeatAccess } from './middleware/seat.js';
 
 interface TerminalMessage {
   type: 'input' | 'resize';
@@ -10,8 +12,15 @@ interface TerminalMessage {
 }
 
 export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: string) {
-  fastify.get('/terminal', { websocket: true }, (socket: WebSocket) => {
-    fastify.log.info('Terminal WebSocket connected');
+  const seatGuard = async (request: FastifyRequest, reply: FastifyReply) => {
+    enforceSeatAccess(request, reply);
+  };
+
+  fastify.get('/vm/:seat/terminal', { websocket: true, preHandler: [wsAuthMiddleware, seatGuard] }, (socket: WebSocket, request) => {
+    const authRequest = request as AuthenticatedRequest;
+    const { seat, workshop_id, name } = authRequest.token;
+    const ws = (socket as unknown as { socket?: WebSocket }).socket ?? socket;
+    fastify.log.info({ seat, workshop_id, name }, 'Terminal WebSocket connected');
 
     // Spawn a PTY shell with interactive login
     const shell = process.env.SHELL || '/bin/bash';
@@ -30,11 +39,17 @@ export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: s
 
     fastify.log.info(`PTY spawned with PID ${ptyProcess.pid}`);
 
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === ws.OPEN) {
+        ws.ping();
+      }
+    }, 30000);
+
     // Send PTY output to WebSocket
     ptyProcess.onData((data: string) => {
       try {
-        if (socket.readyState === socket.OPEN) {
-          socket.send(JSON.stringify({ type: 'output', data }));
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'output', data }));
         }
       } catch (err) {
         fastify.log.error({ err }, 'Error sending PTY data');
@@ -44,14 +59,14 @@ export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: s
     // Handle PTY exit
     ptyProcess.onExit(({ exitCode, signal }) => {
       fastify.log.info(`PTY exited with code ${exitCode}, signal ${signal}`);
-      if (socket.readyState === socket.OPEN) {
-        socket.send(JSON.stringify({ type: 'exit', code: exitCode, signal }));
-        socket.close();
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({ type: 'exit', code: exitCode, signal }));
+        ws.close();
       }
     });
 
     // Handle WebSocket messages
-    socket.on('message', (message: Buffer | string) => {
+    ws.on('message', (message: Buffer | string) => {
       try {
         const msg: TerminalMessage = JSON.parse(message.toString());
 
@@ -78,14 +93,16 @@ export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: s
     });
 
     // Handle WebSocket close
-    socket.on('close', () => {
+    ws.on('close', () => {
       fastify.log.info('Terminal WebSocket closed');
+      clearInterval(pingInterval);
       ptyProcess.kill();
     });
 
     // Handle WebSocket error
-    socket.on('error', (err) => {
+    ws.on('error', (err: Error) => {
       fastify.log.error({ err }, 'Terminal WebSocket error');
+      clearInterval(pingInterval);
       ptyProcess.kill();
     });
   });
