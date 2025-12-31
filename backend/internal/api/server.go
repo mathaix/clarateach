@@ -132,13 +132,19 @@ func (s *Server) listWorkshops(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createWorkshop(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name   string `json:"name"`
-		Seats  int    `json:"seats"`
-		ApiKey string `json:"api_key"`
+		Name        string `json:"name"`
+		Seats       int    `json:"seats"`
+		ApiKey      string `json:"api_key"`
+		RuntimeType string `json:"runtime_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// Default runtime to docker
+	if req.RuntimeType == "" {
+		req.RuntimeType = "docker"
 	}
 
 	// Get owner from auth context if available
@@ -149,14 +155,15 @@ func (s *Server) createWorkshop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workshop := &store.Workshop{
-		ID:        "ws-" + generateID(6),
-		Name:      req.Name,
-		Code:      generateCode(),
-		Seats:     req.Seats,
-		ApiKey:    req.ApiKey,
-		Status:    "created",
-		OwnerID:   ownerID,
-		CreatedAt: time.Now(),
+		ID:          "ws-" + generateID(6),
+		Name:        req.Name,
+		Code:        generateCode(),
+		Seats:       req.Seats,
+		ApiKey:      req.ApiKey,
+		RuntimeType: req.RuntimeType,
+		Status:      "created",
+		OwnerID:     ownerID,
+		CreatedAt:   time.Now(),
 	}
 
 	if err := s.store.CreateWorkshop(workshop); err != nil {

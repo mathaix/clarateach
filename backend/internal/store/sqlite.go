@@ -62,15 +62,15 @@ func (s *SQLiteStore) ListUsers() ([]*User, error) {
 // -- Workshop Operations --
 
 func (s *SQLiteStore) CreateWorkshop(w *Workshop) error {
-	query := `INSERT INTO workshops (id, name, code, seats, api_key, status, owner_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.Exec(query, w.ID, w.Name, w.Code, w.Seats, w.ApiKey, w.Status, w.OwnerID, w.CreatedAt)
+	query := `INSERT INTO workshops (id, name, code, seats, api_key, runtime_type, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.Exec(query, w.ID, w.Name, w.Code, w.Seats, w.ApiKey, w.RuntimeType, w.Status, w.CreatedAt)
 	return err
 }
 
 func (s *SQLiteStore) GetWorkshop(id string) (*Workshop, error) {
 	w := &Workshop{}
-	query := `SELECT id, name, code, seats, api_key, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE id = ?`
-	err := s.db.QueryRow(query, id).Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.Status, &w.OwnerID, &w.CreatedAt)
+	query := `SELECT id, name, code, seats, api_key, runtime_type, status, created_at FROM workshops WHERE id = ?`
+	err := s.db.QueryRow(query, id).Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.RuntimeType, &w.Status, &w.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil // Not found
 	}
@@ -79,8 +79,8 @@ func (s *SQLiteStore) GetWorkshop(id string) (*Workshop, error) {
 
 func (s *SQLiteStore) GetWorkshopByCode(code string) (*Workshop, error) {
 	w := &Workshop{}
-	query := `SELECT id, name, code, seats, api_key, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE code = ?`
-	err := s.db.QueryRow(query, code).Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.Status, &w.OwnerID, &w.CreatedAt)
+	query := `SELECT id, name, code, seats, api_key, runtime_type, status, created_at FROM workshops WHERE code = ?`
+	err := s.db.QueryRow(query, code).Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.RuntimeType, &w.Status, &w.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -88,7 +88,7 @@ func (s *SQLiteStore) GetWorkshopByCode(code string) (*Workshop, error) {
 }
 
 func (s *SQLiteStore) ListWorkshops() ([]*Workshop, error) {
-	query := `SELECT id, name, code, seats, api_key, status, COALESCE(owner_id, ''), created_at FROM workshops ORDER BY created_at DESC`
+	query := `SELECT id, name, code, seats, api_key, runtime_type, status, created_at FROM workshops ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -98,7 +98,7 @@ func (s *SQLiteStore) ListWorkshops() ([]*Workshop, error) {
 	var workshops []*Workshop
 	for rows.Next() {
 		w := &Workshop{}
-		if err := rows.Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.Status, &w.OwnerID, &w.CreatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.RuntimeType, &w.Status, &w.CreatedAt); err != nil {
 			return nil, err
 		}
 		workshops = append(workshops, w)

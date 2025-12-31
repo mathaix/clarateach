@@ -10,6 +10,7 @@ type VMConfig struct {
 	WorkshopID     string
 	Seats          int
 	Image          string // Artifact Registry image URL
+	RuntimeType    string // "docker" (default) or "firecracker"
 	MachineType    string // e.g., "e2-standard-4"
 	DiskSizeGB     int
 	Spot           bool   // Use spot/preemptible VMs
