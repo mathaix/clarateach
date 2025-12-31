@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, PlayCircle, Clock, Users, Trash2, Eye } from 'lucide-react';
+import { Plus, PlayCircle, Clock, Users, Trash2, Eye, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Layout } from '@/components/Layout';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import type { Workshop } from '@/lib/types';
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -21,8 +24,17 @@ export function Dashboard() {
   });
 
   useEffect(() => {
-    loadWorkshops();
-  }, []);
+    if (!authLoading && !isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+    if (!authLoading && isAuthenticated) {
+      loadWorkshops();
+      // Poll for updates every 5 seconds to show status changes
+      const interval = setInterval(loadWorkshops, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [authLoading, isAuthenticated, navigate]);
 
   const loadWorkshops = async () => {
     try {
@@ -45,13 +57,15 @@ export function Dashboard() {
         seats: parseInt(formData.seats),
         api_key: formData.api_key,
       });
-      setFormData({ name: '', seats: '10', api_key: '' });
+      // Close form and reset state immediately
       setShowCreateForm(false);
-      loadWorkshops();
+      setFormData({ name: '', seats: '10', api_key: '' });
+      setCreating(false);
+      // Then refresh the list
+      await loadWorkshops();
     } catch (err) {
       console.error('Failed to create workshop:', err);
       alert(err instanceof Error ? err.message : 'Failed to create workshop');
-    } finally {
       setCreating(false);
     }
   };
@@ -93,38 +107,38 @@ export function Dashboard() {
       running: 'bg-green-100 text-green-800',
       stopping: 'bg-orange-100 text-orange-800',
       stopped: 'bg-gray-100 text-gray-800',
+      deleting: 'bg-red-100 text-red-800',
+      deleted: 'bg-gray-200 text-gray-500',
       error: 'bg-red-100 text-red-800',
     };
     return styles[status] || styles.created;
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">Loading...</p>
-      </div>
+      <Layout>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+        </div>
+      </Layout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h1 className="text-3xl text-gray-900">Instructor Dashboard</h1>
-              <p className="text-gray-600 mt-1">Manage your workshops</p>
-            </div>
-            <Button className="w-full sm:w-auto" onClick={() => setShowCreateForm(!showCreateForm)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Create Workshop
-            </Button>
-          </div>
+    <Layout>
+      {/* Page Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Your Workshops</h1>
+          <p className="text-gray-600 mt-1">Create and manage your workshop sessions</p>
         </div>
+        <Button className="w-full sm:w-auto" onClick={() => setShowCreateForm(!showCreateForm)}>
+          <Plus className="w-4 h-4 mr-2" />
+          Create Workshop
+        </Button>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div>
         {/* Create Form */}
         {showCreateForm && (
           <Card className="mb-8">
@@ -183,8 +197,7 @@ export function Dashboard() {
         )}
 
         {/* Workshops List */}
-        <div>
-          <h2 className="text-xl mb-4 text-gray-900">Your Workshops</h2>
+        <div className="mt-8">
           {workshops.length > 0 ? (
             <div className="grid gap-4">
               {workshops.map((workshop) => (
@@ -220,20 +233,22 @@ export function Dashboard() {
                             Start
                           </Button>
                         )}
-                        {(workshop.status === 'running' || workshop.status === 'provisioning') && (
-                          <Button className="w-full sm:w-auto" onClick={() => navigate(`/workshop/${workshop.id}`)}>
+                        {['running', 'provisioning', 'stopped', 'stopping', 'deleted', 'deleting'].includes(workshop.status) && (
+                          <Button className="w-full sm:w-auto" variant={workshop.status === 'deleted' ? 'outline' : 'default'} onClick={() => navigate(`/workshop/${workshop.id}`)}>
                             <Eye className="w-4 h-4 mr-2" />
                             View
                           </Button>
                         )}
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="self-start sm:self-auto"
-                          onClick={() => handleDeleteWorkshop(workshop.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {!['deleting', 'deleted'].includes(workshop.status) && (
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="self-start sm:self-auto"
+                            onClick={() => handleDeleteWorkshop(workshop.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -249,6 +264,6 @@ export function Dashboard() {
           )}
         </div>
       </div>
-    </div>
+    </Layout>
   );
 }

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Users, Copy, Check, ArrowLeft, StopCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Layout } from '@/components/Layout';
 import { api } from '@/lib/api';
 import type { Workshop, Session } from '@/lib/types';
 
@@ -31,7 +32,7 @@ export function WorkshopView() {
       loadLearners();
     } catch (err) {
       console.error('Failed to load workshop:', err);
-      navigate('/');
+      navigate('/dashboard');
     } finally {
       setLoading(false);
     }
@@ -61,7 +62,7 @@ export function WorkshopView() {
     setStopping(true);
     try {
       await api.stopWorkshop(id!);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err) {
       console.error('Failed to stop workshop:', err);
       alert(err instanceof Error ? err.message : 'Failed to stop workshop');
@@ -92,9 +93,11 @@ export function WorkshopView() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500">Loading...</p>
-      </div>
+      <Layout>
+        <div className="flex items-center justify-center py-12">
+          <p className="text-gray-500">Loading...</p>
+        </div>
+      </Layout>
     );
   }
 
@@ -103,35 +106,33 @@ export function WorkshopView() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-              <Button className="w-full sm:w-auto" variant="ghost" onClick={() => navigate('/')}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Dashboard
-              </Button>
-              <div>
-                <h1 className="text-3xl text-gray-900">{workshop.name}</h1>
-                <p className="text-gray-600 mt-1">Managing workshop session</p>
-              </div>
-            </div>
-            <Button
-              variant="destructive"
-              onClick={handleStopWorkshop}
-              disabled={stopping || workshop.status !== 'running'}
-              className="w-full sm:w-auto"
-            >
-              <StopCircle className="w-4 h-4 mr-2" />
-              {stopping ? 'Stopping...' : 'End Workshop'}
+    <Layout>
+      {/* Workshop Header */}
+      <div className="mb-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <Button className="w-full sm:w-auto" variant="ghost" onClick={() => navigate('/dashboard')}>
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Dashboard
             </Button>
+            <div>
+              <h1 className="text-3xl text-gray-900">{workshop.name}</h1>
+              <p className="text-gray-600 mt-1">Managing workshop session</p>
+            </div>
           </div>
+          <Button
+            variant="destructive"
+            onClick={handleStopWorkshop}
+            disabled={stopping || workshop.status !== 'running'}
+            className="w-full sm:w-auto"
+          >
+            <StopCircle className="w-4 h-4 mr-2" />
+            {stopping ? 'Stopping...' : 'End Workshop'}
+          </Button>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div>
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Workshop Info */}
           <div className="lg:col-span-1 space-y-6">
@@ -248,6 +249,6 @@ export function WorkshopView() {
           </div>
         </div>
       </div>
-    </div>
+    </Layout>
   );
 }
