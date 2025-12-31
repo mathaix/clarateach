@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import MonacoEditor from '@monaco-editor/react';
-import { Code, Folder, FileText, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react';
+import { Code, Folder, FileText, ChevronRight, ChevronDown, RefreshCw, RotateCw } from 'lucide-react';
 import { getWorkspaceSession } from '../lib/workspaceSession';
 
 interface FileInfo {
@@ -55,18 +55,18 @@ function FileTreeItem({ file, depth, onSelect, selectedPath, onLoadChildren }: F
       >
         {file.is_directory && (
           isOpen ? (
-            <ChevronDown className="w-3 h-3 text-vscode-text flex-shrink-0" />
+            <ChevronDown className="w-3 h-3 text-gray-200 flex-shrink-0" />
           ) : (
-            <ChevronRight className="w-3 h-3 text-vscode-text flex-shrink-0" />
+            <ChevronRight className="w-3 h-3 text-gray-200 flex-shrink-0" />
           )
         )}
         {file.is_directory ? (
           <Folder className="w-4 h-4 text-yellow-500 flex-shrink-0" />
         ) : (
-          <FileText className="w-4 h-4 text-vscode-text flex-shrink-0" />
+          <FileText className="w-4 h-4 text-gray-200 flex-shrink-0" />
         )}
-        <span className="text-sm text-vscode-text truncate">{file.name}</span>
-        {loading && <RefreshCw className="w-3 h-3 text-vscode-text animate-spin" />}
+        <span className="text-sm text-gray-200 truncate">{file.name}</span>
+        {loading && <RefreshCw className="w-3 h-3 text-gray-200 animate-spin" />}
       </div>
       {file.is_directory && isOpen && children.map((child) => (
         <FileTreeItem
@@ -88,6 +88,7 @@ export function Editor() {
   const [content, setContent] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const session = getWorkspaceSession();
   const API_BASE = session ? `${session.endpoint}/vm/${session.seat}` : '';
@@ -125,6 +126,17 @@ export function Editor() {
       throw new Error(data.error?.message || `Request failed (${response.status})`);
     }
     return data.files || [];
+  };
+
+  const refreshFiles = async () => {
+    setRefreshing(true);
+    try {
+      const newFiles = await loadDirectory();
+      setFiles(newFiles);
+    } catch (err) {
+      console.error('Failed to refresh files:', err);
+    }
+    setRefreshing(false);
   };
 
   useEffect(() => {
@@ -204,8 +216,8 @@ export function Editor() {
       {/* Header */}
       <div className="bg-vscode-sidebar border-b border-vscode-border px-4 py-2 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
-          <Code className="w-4 h-4 text-vscode-text" />
-          <span className="text-vscode-text text-sm">
+          <Code className="w-4 h-4 text-gray-200" />
+          <span className="text-gray-200 text-sm">
             {selectedFile ? selectedFile.name : 'Editor'}
           </span>
         </div>
@@ -213,7 +225,7 @@ export function Editor() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="text-xs px-2 py-1 bg-vscode-header hover:bg-vscode-border rounded text-vscode-text disabled:opacity-50"
+            className="text-xs px-2 py-1 bg-vscode-header hover:bg-vscode-border rounded text-gray-200 disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -223,17 +235,25 @@ export function Editor() {
       <div className="flex-1 flex overflow-hidden">
         {/* File Explorer */}
         <div className="w-56 bg-vscode-sidebar border-r border-vscode-border overflow-auto flex-shrink-0">
-          <div className="px-3 py-2 text-xs text-vscode-text uppercase tracking-wider">
-            Explorer
+          <div className="px-3 py-2 text-xs text-gray-200 uppercase tracking-wider flex items-center justify-between">
+            <span>Explorer</span>
+            <button
+              onClick={refreshFiles}
+              disabled={refreshing || loading}
+              className="p-1 hover:bg-vscode-header rounded disabled:opacity-50"
+              title="Refresh files"
+            >
+              <RotateCw className={`w-3 h-3 text-gray-200 ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
           </div>
           {!session ? (
-            <div className="px-3 py-2 text-sm text-vscode-text">
+            <div className="px-3 py-2 text-sm text-gray-200">
               Missing workspace session
             </div>
           ) : loading ? (
-            <div className="px-3 py-2 text-sm text-vscode-text">Loading...</div>
+            <div className="px-3 py-2 text-sm text-gray-200">Loading...</div>
           ) : files.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-vscode-text">No files</div>
+            <div className="px-3 py-2 text-sm text-gray-200">No files</div>
           ) : (
             files.map((file) => (
               <FileTreeItem
@@ -267,7 +287,7 @@ export function Editor() {
               }}
             />
           ) : (
-            <div className="h-full flex items-center justify-center text-vscode-text">
+            <div className="h-full flex items-center justify-center text-gray-200">
               <div className="text-center">
                 <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>Select a file to edit</p>

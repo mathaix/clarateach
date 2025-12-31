@@ -78,6 +78,5 @@ ENV TERM=xterm-256color
 # Expose workspace server ports
 EXPOSE 3001 3002
 
-# Default command - start tmux session
+# Start workspace server
 ENTRYPOINT ["/home/learner/entrypoint.sh"]
-CMD ["bash"]

@@ -27,7 +27,7 @@ export function Dashboard() {
   const loadWorkshops = async () => {
     try {
       const data = await api.listWorkshops();
-      setWorkshops(data.workshops);
+      setWorkshops(data.workshops || []);
     } catch (err) {
       console.error('Failed to load workshops:', err);
     } finally {

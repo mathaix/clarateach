@@ -2,22 +2,14 @@
 set -e
 
 # ClaraTeach Workspace Entrypoint
-# Manages tmux session for terminal persistence
+# Starts the workspace server (terminal and file API)
 
-SESSION_NAME="workspace"
+echo "Starting ClaraTeach Workspace Server..."
+echo "TERMINAL_PORT: ${TERMINAL_PORT:-3001}"
+echo "FILES_PORT: ${FILES_PORT:-3002}"
+echo "AUTH_DISABLED: ${AUTH_DISABLED:-false}"
+echo "WORKSPACE_DIR: ${WORKSPACE_DIR:-/workspace}"
 
-# If running interactively (with TTY), use tmux
-if [ -t 0 ] && [ -t 1 ]; then
-    # Check if tmux session already exists
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        echo "Attaching to existing tmux session: $SESSION_NAME"
-        exec tmux attach-session -t "$SESSION_NAME"
-    else
-        echo "Creating new tmux session: $SESSION_NAME"
-        # Create new session and run the provided command (or bash)
-        exec tmux new-session -s "$SESSION_NAME" "$@"
-    fi
-else
-    # Non-interactive: just run the command directly
-    exec "$@"
-fi
+# Change to server directory and start
+cd /home/learner/server
+exec node dist/index.js

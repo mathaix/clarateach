@@ -8,7 +8,8 @@ export function Browser() {
     // Check if endpoint has a path (debug proxy)
     const url = new URL(session.endpoint);
     const basePath = url.pathname === '/' ? '' : url.pathname;
-    baseUrl = `${url.origin}${basePath}/vm/${session.seat}/browser`;
+    // Trailing slash is critical - ensures relative paths in Neko resolve correctly
+    baseUrl = `${url.origin}${basePath}/vm/${session.seat}/browser/`;
   }
   const tokenParam = session?.token ? `?token=${encodeURIComponent(session.token)}` : '';
   const browserUrl = `${baseUrl}${tokenParam}`;

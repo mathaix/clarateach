@@ -88,6 +88,71 @@ class ApiClient {
       body: JSON.stringify(data),
     });
   }
+
+  // Admin
+  async adminOverview(): Promise<{ workshops: AdminWorkshopView[]; total: number }> {
+    return this.request('/admin/overview');
+  }
+
+  async listVMs(): Promise<{ vms: VMWithWorkshop[]; total: number }> {
+    return this.request('/admin/vms');
+  }
+
+  async getVMDetails(workshopId: string): Promise<VMDetails> {
+    return this.request(`/admin/vms/${workshopId}`);
+  }
+
+  getSSHKeyDownloadUrl(workshopId: string): string {
+    return `${API_BASE}/admin/vms/${workshopId}/ssh-key`;
+  }
+}
+
+// Admin types
+export interface WorkshopVM {
+  id: string;
+  workshop_id: string;
+  vm_name: string;
+  vm_id: string;
+  zone: string;
+  machine_type: string;
+  external_ip: string;
+  internal_ip: string;
+  status: string;
+  ssh_public_key: string;
+  ssh_user: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminWorkshopView {
+  workshop: Workshop;
+  vm?: WorkshopVM;
+  sessions: Session[];
+  active_students: number;
+  total_seats: number;
+  ssh_command?: string;
+}
+
+export interface VMWithWorkshop extends WorkshopVM {
+  workshop_name: string;
+  active_students: number;
+  total_seats: number;
+  ssh_command: string;
+  gcloud_ssh: string;
+}
+
+export interface VMDetails {
+  vm: WorkshopVM;
+  workshop: Workshop;
+  sessions: Session[];
+  stats: {
+    active_students: number;
+    total_seats: number;
+  };
+  access: {
+    ssh_command: string;
+    gcloud_ssh: string;
+  };
 }
 
 export const api = new ApiClient();

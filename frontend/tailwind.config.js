@@ -32,6 +32,15 @@ export default {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
         },
+        // VS Code dark theme colors
+        vscode: {
+          bg: "#1e1e1e",
+          sidebar: "#252526",
+          header: "#3c3c3c",
+          border: "#474747",
+          text: "#cccccc",
+          accent: "#007acc",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
