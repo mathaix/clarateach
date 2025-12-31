@@ -1,12 +1,37 @@
 import type { Workshop, Session, JoinResponse, ApiError } from './types';
 
 const API_BASE = '/api';
+const TOKEN_KEY = 'clarateach_token';
+
+// User type
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: 'instructor' | 'admin';
+  created_at: string;
+}
 
 class ApiClient {
-  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+  private getToken(): string | null {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const token = this.getToken();
+    if (token) {
+      return { Authorization: `Bearer ${token}` };
+    }
+    return {};
+  }
+
+  private async request<T>(path: string, options?: RequestInit & { auth?: boolean }): Promise<T> {
+    const authHeaders = options?.auth !== false ? this.getAuthHeaders() : {};
+
     const response = await fetch(`${API_BASE}${path}`, {
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
         ...options?.headers,
       },
       ...options,
@@ -81,12 +106,24 @@ class ApiClient {
     return this.request(`/workshops/${id}/learners`);
   }
 
-  // Join
+  // Join (legacy)
   async joinWorkshop(data: { code: string; name?: string; odehash?: string }): Promise<JoinResponse> {
     return this.request('/join', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  // Registration
+  async register(data: { workshop_code: string; email: string; name: string }): Promise<RegisterResponse> {
+    return this.request('/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getSession(accessCode: string): Promise<SessionResponse> {
+    return this.request(`/session/${accessCode}`);
   }
 
   // Admin
@@ -105,6 +142,53 @@ class ApiClient {
   getSSHKeyDownloadUrl(workshopId: string): string {
     return `${API_BASE}/admin/vms/${workshopId}/ssh-key`;
   }
+
+  // Auth
+  async authRegister(email: string, password: string, name: string): Promise<AuthResponse> {
+    return this.request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, name }),
+      auth: false,
+    });
+  }
+
+  async authLogin(email: string, password: string): Promise<AuthResponse> {
+    return this.request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+      auth: false,
+    });
+  }
+
+  async authLogout(): Promise<{ success: boolean }> {
+    return this.request('/auth/logout', {
+      method: 'POST',
+    });
+  }
+
+  async authMe(token?: string): Promise<{ user: User }> {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    return this.request('/auth/me', { headers });
+  }
+}
+
+// Registration types
+export interface RegisterResponse {
+  access_code: string;
+  already_registered: boolean;
+  message: string;
+}
+
+export interface SessionResponse {
+  status: 'pending' | 'ready';
+  message?: string;
+  endpoint?: string;
+  seat?: number;
+  name?: string;
+  workshop_id?: string;
 }
 
 // Admin types
@@ -153,6 +237,12 @@ export interface VMDetails {
     ssh_command: string;
     gcloud_ssh: string;
   };
+}
+
+// Auth response type
+export interface AuthResponse {
+  token: string;
+  user: User;
 }
 
 export const api = new ApiClient();

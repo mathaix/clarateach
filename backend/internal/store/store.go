@@ -7,6 +7,16 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// User represents an instructor or admin
+type User struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"` // Never return in JSON
+	Name         string    `json:"name"`
+	Role         string    `json:"role"` // "instructor" or "admin"
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type Workshop struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -14,6 +24,7 @@ type Workshop struct {
 	Seats     int       `json:"seats"`
 	ApiKey    string    `json:"-"` // Never return API key in JSON
 	Status    string    `json:"status"`
+	OwnerID   string    `json:"owner_id"` // User ID of the instructor
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -60,12 +71,32 @@ type Session struct {
 	JoinedAt    time.Time `json:"joined_at"`
 }
 
+// Registration represents a learner's registration for a workshop
+type Registration struct {
+	ID          string     `json:"id"`
+	AccessCode  string     `json:"access_code"`   // User-facing code like "FZL-7X9K"
+	Email       string     `json:"email"`
+	Name        string     `json:"name"`
+	WorkshopID  string     `json:"workshop_id"`
+	SeatID      *int       `json:"seat_id"`       // NULL until first join
+	Status      string     `json:"status"`        // registered, active, expired
+	CreatedAt   time.Time  `json:"created_at"`
+	JoinedAt    *time.Time `json:"joined_at"`     // When they first accessed workspace
+}
+
 type Store interface {
+	// User Operations
+	CreateUser(u *User) error
+	GetUser(id string) (*User, error)
+	GetUserByEmail(email string) (*User, error)
+	ListUsers() ([]*User, error)
+
 	// Workshop Operations
 	CreateWorkshop(w *Workshop) error
 	GetWorkshop(id string) (*Workshop, error)
 	GetWorkshopByCode(code string) (*Workshop, error)
 	ListWorkshops() ([]*Workshop, error)
+	ListWorkshopsByOwner(ownerID string) ([]*Workshop, error)
 	UpdateWorkshopStatus(id string, status string) error
 	DeleteWorkshop(id string) error
 
@@ -85,9 +116,27 @@ type Store interface {
 	ListVMs() ([]*WorkshopVM, error)                         // Lists active VMs only
 	ListAllVMs() ([]*WorkshopVM, error)                      // Lists all VMs including removed
 	GetVMPrivateKey(workshopID string) (string, error)       // Returns SSH private key
+
+	// Registration Operations
+	CreateRegistration(r *Registration) error
+	GetRegistration(accessCode string) (*Registration, error)
+	GetRegistrationByEmail(workshopID, email string) (*Registration, error)
+	UpdateRegistration(r *Registration) error
+	CountRegistrations(workshopID string) (int, error)
 }
 
 const schema = `
+CREATE TABLE IF NOT EXISTS users (
+	id TEXT PRIMARY KEY,
+	email TEXT NOT NULL UNIQUE,
+	password_hash TEXT NOT NULL,
+	name TEXT NOT NULL,
+	role TEXT NOT NULL DEFAULT 'instructor',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
 CREATE TABLE IF NOT EXISTS workshops (
 	id TEXT PRIMARY KEY,
 	name TEXT NOT NULL,
@@ -95,7 +144,9 @@ CREATE TABLE IF NOT EXISTS workshops (
 	seats INTEGER NOT NULL,
 	api_key TEXT NOT NULL,
 	status TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	owner_id TEXT,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY(owner_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -135,6 +186,23 @@ CREATE TABLE IF NOT EXISTS workshop_vms (
 
 CREATE INDEX IF NOT EXISTS idx_workshop_vms_workshop_id ON workshop_vms(workshop_id);
 CREATE INDEX IF NOT EXISTS idx_workshop_vms_status ON workshop_vms(status);
+
+CREATE TABLE IF NOT EXISTS registrations (
+	id TEXT PRIMARY KEY,
+	access_code TEXT NOT NULL UNIQUE,
+	email TEXT NOT NULL,
+	name TEXT NOT NULL,
+	workshop_id TEXT NOT NULL,
+	seat_id INTEGER,
+	status TEXT NOT NULL DEFAULT 'registered',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	joined_at DATETIME,
+	FOREIGN KEY(workshop_id) REFERENCES workshops(id),
+	UNIQUE(workshop_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_registrations_access_code ON registrations(access_code);
+CREATE INDEX IF NOT EXISTS idx_registrations_workshop_id ON registrations(workshop_id);
 `
 
 func InitDB(dbPath string) (*sql.DB, error) {
@@ -145,6 +213,17 @@ func InitDB(dbPath string) (*sql.DB, error) {
 
 	if _, err := db.Exec(schema); err != nil {
 		return nil, err
+	}
+
+	// Run migrations for existing databases
+	migrations := []string{
+		// Add owner_id column to workshops if it doesn't exist
+		`ALTER TABLE workshops ADD COLUMN owner_id TEXT`,
+	}
+
+	for _, migration := range migrations {
+		// Ignore errors for migrations (column may already exist)
+		db.Exec(migration)
 	}
 
 	return db, nil

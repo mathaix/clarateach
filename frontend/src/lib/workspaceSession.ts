@@ -1,13 +1,27 @@
-interface WorkspaceSession {
-  token: string;
+export interface WorkspaceSession {
+  token?: string;
   endpoint: string;
-  odehash: string;
+  odehash?: string;
   seat: number;
-  code: string;
+  code?: string;
   name?: string;
 }
 
+// In-memory session storage for new registration flow
+let currentSession: WorkspaceSession | null = null;
+
+export function setWorkspaceSession(session: WorkspaceSession): void {
+  currentSession = session;
+  // Also store in localStorage for legacy support
+  localStorage.setItem('clarateach_session', JSON.stringify(session));
+}
+
 export function getWorkspaceSession(): WorkspaceSession | null {
+  // Prefer in-memory session (set by SessionWorkspace)
+  if (currentSession) {
+    return currentSession;
+  }
+  // Fall back to localStorage (legacy flow)
   const data = localStorage.getItem('clarateach_session');
   if (!data) return null;
   try {

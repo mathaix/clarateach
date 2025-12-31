@@ -1,5 +1,6 @@
 # ClaraTeach Learner Workspace Container
 # Base image with Claude CLI, Python, Node.js, and dev tools
+# Security hardened for workshop environments
 
 FROM ubuntu:22.04
 
@@ -7,6 +8,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
+# Note: curl/wget are needed for package installation but restricted at runtime via iptables
 RUN apt-get update && apt-get install -y \
     # Build essentials
     build-essential \
@@ -14,7 +16,7 @@ RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3-pip \
-    # Core tools
+    # Core tools (curl/wget needed for npm/pip, restricted via network egress rules)
     curl \
     wget \
     git \
@@ -28,7 +30,9 @@ RUN apt-get update && apt-get install -y \
     make \
     g++ \
     # Clean up
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Remove setuid/setgid binaries that aren't needed
+    && find /usr -type f \( -perm -4000 -o -perm -2000 \) -exec chmod u-s,g-s {} \; 2>/dev/null || true
 
 # Install Node.js 20 LTS
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -77,6 +81,17 @@ ENV TERM=xterm-256color
 
 # Expose workspace server ports
 EXPOSE 3001 3002
+
+# Security labels
+LABEL org.opencontainers.image.title="ClaraTeach Workspace"
+LABEL org.opencontainers.image.description="Secure learner workspace with Claude CLI"
+LABEL org.opencontainers.image.vendor="ClaraTeach"
+LABEL security.hardened="true"
+LABEL security.non-root="true"
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -sf http://localhost:3001/health || exit 1
 
 # Start workspace server
 ENTRYPOINT ["/home/learner/entrypoint.sh"]

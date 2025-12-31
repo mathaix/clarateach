@@ -347,6 +347,96 @@ log "Image: $IMAGE"
 log "Opening iptables for port 8080..."
 iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
 
+# =============================================================================
+# CONTAINER NETWORK EGRESS FILTERING
+# Whitelist only necessary domains for workspace containers
+# =============================================================================
+log "Setting up network egress filtering..."
+
+# Create a custom iptables chain for container egress filtering
+iptables -N CONTAINER_EGRESS 2>/dev/null || iptables -F CONTAINER_EGRESS
+
+# Define allowed domains and their IPs
+# We'll resolve IPs at startup and create rules
+ALLOWED_DOMAINS=(
+    # Claude API
+    "api.anthropic.com"
+    "anthropic.com"
+    # Package managers
+    "pypi.org"
+    "files.pythonhosted.org"
+    "registry.npmjs.org"
+    # GitHub (for git operations)
+    "github.com"
+    "api.github.com"
+    "raw.githubusercontent.com"
+    # DNS (allow Google DNS)
+    "8.8.8.8"
+    "8.8.4.4"
+)
+
+# Create whitelist file for DNS-based resolution
+cat > /etc/clarateach-allowed-hosts.txt <<'ALLOWLIST'
+# ClaraTeach Egress Whitelist
+# Claude API
+api.anthropic.com
+anthropic.com
+# Package managers
+pypi.org
+files.pythonhosted.org
+registry.npmjs.org
+# GitHub
+github.com
+api.github.com
+raw.githubusercontent.com
+objects.githubusercontent.com
+codeload.github.com
+ALLOWLIST
+
+# Allow established/related connections
+iptables -A CONTAINER_EGRESS -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow DNS lookups (UDP 53)
+iptables -A CONTAINER_EGRESS -p udp --dport 53 -j ACCEPT
+
+# Allow loopback and internal Docker network
+iptables -A CONTAINER_EGRESS -d 127.0.0.0/8 -j ACCEPT
+iptables -A CONTAINER_EGRESS -d 172.16.0.0/12 -j ACCEPT
+iptables -A CONTAINER_EGRESS -d 10.0.0.0/8 -j ACCEPT
+
+# Allow Google metadata service (needed for GCP)
+iptables -A CONTAINER_EGRESS -d 169.254.169.254 -j ACCEPT
+
+# Resolve and allow each domain
+for domain in "${ALLOWED_DOMAINS[@]}"; do
+    # Skip if it's already an IP
+    if [[ $domain =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        iptables -A CONTAINER_EGRESS -d "$domain" -j ACCEPT
+        log "Allowed IP: $domain"
+    else
+        # Resolve domain to IP(s)
+        IPS=$(getent hosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u)
+        if [ -n "$IPS" ]; then
+            for ip in $IPS; do
+                iptables -A CONTAINER_EGRESS -d "$ip" -j ACCEPT
+                log "Allowed $domain -> $ip"
+            done
+        else
+            log "Warning: Could not resolve $domain"
+        fi
+    fi
+done
+
+# Log and drop everything else from containers
+iptables -A CONTAINER_EGRESS -j LOG --log-prefix "CONTAINER_BLOCKED: " --log-level 4
+iptables -A CONTAINER_EGRESS -j DROP
+
+# Apply CONTAINER_EGRESS chain to traffic from Docker networks
+# Docker typically uses 172.17.0.0/16 for default bridge and 172.18+/16 for custom networks
+iptables -I FORWARD -s 172.16.0.0/12 -j CONTAINER_EGRESS
+
+log "Network egress filtering configured"
+
 # Wait for Docker (COS has Docker pre-installed)
 log "Waiting for Docker..."
 while ! docker info > /dev/null 2>&1; do
@@ -440,7 +530,7 @@ for i in $(seq 1 $SEATS); do
     # Create data volume for this seat
     docker volume create "seat-${i}-data" 2>/dev/null || true
 
-    # Start main workspace container
+    # Start main workspace container with security hardening
     docker run -d \
         --name "seat-$i" \
         --restart unless-stopped \
@@ -455,9 +545,21 @@ for i in $(seq 1 $SEATS); do
         -e "TERMINAL_PORT=3001" \
         -e "FILES_PORT=3002" \
         -e "AUTH_DISABLED=$AUTH_DISABLED" \
-        "$IMAGE" && log "Seat $i workspace started" || log "ERROR: Failed to start seat $i workspace"
+        --cap-drop=ALL \
+        --cap-add=CHOWN \
+        --cap-add=SETUID \
+        --cap-add=SETGID \
+        --cap-add=DAC_OVERRIDE \
+        --cap-add=FOWNER \
+        --cap-add=KILL \
+        --cap-add=SYS_PTRACE \
+        --security-opt=no-new-privileges:true \
+        --memory=2g \
+        --cpus=1.5 \
+        "$IMAGE" && log "Seat $i workspace started (hardened)" || log "ERROR: Failed to start seat $i workspace"
 
-    # Start Neko browser sidecar
+    # Start Neko browser sidecar with security hardening
+    # Neko needs more capabilities for browser rendering but we still limit what we can
     docker run -d \
         --name "seat-${i}-neko" \
         --restart unless-stopped \
@@ -467,7 +569,13 @@ for i in $(seq 1 $SEATS); do
         -e "NEKO_SCREEN=1280x720@30" \
         -e "NEKO_PASSWORD=neko" \
         -e "NEKO_PASSWORD_ADMIN=admin" \
-        m1k1o/neko:firefox && log "Seat $i Neko started" || log "Warning: Neko container failed for seat $i"
+        -e "NEKO_ICELITE=true" \
+        --security-opt=no-new-privileges:true \
+        --memory=3g \
+        --memory-swap=3g \
+        --cpus=2 \
+        --pids-limit=512 \
+        m1k1o/neko:firefox && log "Seat $i Neko started (hardened)" || log "Warning: Neko container failed for seat $i"
 done
 
 log "Starting Caddy reverse proxy..."

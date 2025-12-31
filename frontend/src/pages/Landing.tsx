@@ -2,21 +2,47 @@ import { useNavigate } from 'react-router-dom';
 import { GraduationCap, Users, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/lib/auth';
 
 export function Landing() {
   const navigate = useNavigate();
+  const { isAuthenticated, user, logout } = useAuth();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center gap-2">
-            <GraduationCap className="w-8 h-8 text-indigo-600" />
-            <span className="text-2xl font-semibold text-gray-900">ClaraTeach</span>
-          </div>
+      <header className="bg-white border-b">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <GraduationCap className="w-7 h-7 text-indigo-600" />
+              <span className="text-xl font-semibold text-gray-900">ClaraTeach</span>
+            </div>
+            <div className="flex items-center gap-3">
+              {isAuthenticated ? (
+                <>
+                  <span className="text-sm text-gray-600 hidden sm:inline">
+                    Hi, {user?.name}
+                  </span>
+                  <Button variant="outline" size="sm" onClick={() => navigate('/dashboard')}>
+                    Dashboard
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => logout()}>
+                    Sign out
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
+                    Sign in
+                  </Button>
+                  <Button size="sm" onClick={() => navigate('/signup')}>
+                    Sign up
+                  </Button>
+                </>
+              )}
+            </div>
         </div>
-      </div>
+      </header>
 
       {/* Hero */}
       <div className="max-w-7xl mx-auto px-4 py-12 pb-24 sm:py-16">
@@ -101,7 +127,7 @@ export function Landing() {
       {/* Footer */}
       <div className="mt-8 md:mt-0 md:fixed bottom-0 left-0 right-0 bg-white border-t py-4">
         <div className="max-w-7xl mx-auto px-4 text-center text-sm text-gray-500">
-          Powered by Claude Code from Anthropic
+          Built by ClaraMaps
         </div>
       </div>
     </div>
