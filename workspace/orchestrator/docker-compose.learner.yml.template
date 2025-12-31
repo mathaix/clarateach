@@ -1,0 +1,60 @@
+# Docker Compose template for learner containers
+# This file is processed by create-workshop.sh to generate a compose file
+#
+# Variables (replaced at runtime):
+#   {{WORKSHOP_ID}}   - Workshop identifier
+#   {{SEAT}}          - Seat number
+#   {{SEAT_PADDED}}   - Seat number (zero-padded)
+#   {{API_KEY}}       - Anthropic API key
+#   {{JWKS_URL}}      - JWKS endpoint for token validation
+#   {{AUTH_DISABLED}} - Whether to disable authentication
+#
+# Usage:
+#   sed -e 's/{{WORKSHOP_ID}}/abc123/g' \
+#       -e 's/{{SEAT}}/1/g' \
+#       -e 's/{{SEAT_PADDED}}/01/g' \
+#       docker-compose.learner.yml.template > docker-compose.learner-1.yml
+
+services:
+  workspace:
+    image: clarateach-workspace:latest
+    container_name: clarateach-{{WORKSHOP_ID}}-{{SEAT}}
+    hostname: seat-{{SEAT}}
+    restart: unless-stopped
+    volumes:
+      - workspace-{{SEAT}}-data:/workspace
+    environment:
+      - WORKSPACE_DIR=/workspace
+      - TERM=xterm-256color
+      - TERMINAL_PORT=3001
+      - FILES_PORT=3002
+      - SEAT={{SEAT}}
+      - CONTAINER_ID=c-{{SEAT_PADDED}}
+      - AUTH_DISABLED={{AUTH_DISABLED}}
+      - JWKS_URL={{JWKS_URL}}
+      - ANTHROPIC_API_KEY={{API_KEY}}
+    networks:
+      - clarateach-{{WORKSHOP_ID}}
+    labels:
+      - "clarateach.type=learner-workspace"
+      - "clarateach.workshop={{WORKSHOP_ID}}"
+      - "clarateach.seat={{SEAT}}"
+    command: node /home/learner/server/dist/index.js
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  workspace-{{SEAT}}-data:
+    driver: local
+    labels:
+      - "clarateach.type=workspace-data"
+      - "clarateach.workshop={{WORKSHOP_ID}}"
+      - "clarateach.seat={{SEAT}}"
+
+networks:
+  clarateach-{{WORKSHOP_ID}}:
+    external: true

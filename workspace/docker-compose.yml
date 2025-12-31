@@ -1,0 +1,88 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: clarateach-caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_PORT:-8000}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - clarateach-net
+    depends_on:
+      - workspace
+      - neko
+
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: clarateach-workspace
+    container_name: clarateach-workspace
+    hostname: workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      # Persist workspace files
+      - workspace-data:/workspace
+    expose:
+      # Internal ports only - Caddy proxies to these
+      - "3001"
+      - "3002"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - WORKSPACE_DIR=/workspace
+      - TERM=xterm-256color
+      - TERMINAL_PORT=3001
+      - FILES_PORT=3002
+      - SEAT=1
+      - CONTAINER_ID=c-01
+      # JWT Authentication (set AUTH_DISABLED=true for local development)
+      - AUTH_DISABLED=${AUTH_DISABLED:-true}
+      - JWKS_URL=${JWKS_URL:-}
+    networks:
+      clarateach-net:
+        aliases:
+          - workspace-1
+    # Start the workspace server
+    command: node /home/learner/server/dist/index.js
+
+  # neko browser preview
+  # Note: neko only supports amd64, uses QEMU emulation on ARM Macs
+  neko:
+    image: m1k1o/neko:firefox
+    platform: linux/amd64
+    container_name: clarateach-neko
+    shm_size: "2gb"
+    environment:
+      NEKO_SCREEN: "1280x720@30"
+      NEKO_PASSWORD: "neko"
+      NEKO_PASSWORD_ADMIN: "admin"
+      NEKO_EPR: "52000-52100"
+      NEKO_ICELITE: "true"
+      # Control settings
+      NEKO_CONTROL_PROTECTION: "false"
+      NEKO_IMPLICIT_CONTROL: "true"
+    ports:
+      # neko web UI
+      - "8080:8080"
+      # WebRTC UDP ports
+      - "52000-52100:52000-52100/udp"
+    networks:
+      - clarateach-net
+    cap_add:
+      - SYS_ADMIN
+
+volumes:
+  workspace-data:
+    driver: local
+  caddy-data:
+    driver: local
+  caddy-config:
+    driver: local
+
+networks:
+  clarateach-net:
+    driver: bridge

@@ -252,6 +252,102 @@ Align terminology with architecture docs:
 
 ---
 
+## Issue #10: Workspace Auth Disabled by Default
+
+**Status:** Open
+**Priority:** High
+**Affected Files:** `workspace/docker-compose.yml`
+
+### Description
+
+`AUTH_DISABLED` defaults to `true` when not set, which disables workspace authentication in the main compose setup:
+
+- `AUTH_DISABLED=${AUTH_DISABLED:-true}`
+- Caddy exposes the workspace on `${CADDY_PORT:-8000}`
+
+If this compose file is used outside local development, the workspace is accessible without auth.
+
+### Recommendation
+
+Default `AUTH_DISABLED` to `false` in non-local compose files and require explicit opt-out for local dev (or bind Caddy to `127.0.0.1`).
+
+---
+
+## Issue #11: Neko Exposed with Static Credentials
+
+**Status:** Open
+**Priority:** High
+**Affected Files:** `workspace/docker-compose.yml`, `workspace/docker-compose.local.yml`
+
+### Description
+
+Neko exposes port 8080 with static passwords and control protections disabled:
+
+- `NEKO_PASSWORD=neko`, `NEKO_PASSWORD_ADMIN=admin`
+- `NEKO_CONTROL_PROTECTION=false`, `NEKO_IMPLICIT_CONTROL=true`
+
+Anyone who can reach port 8080 can control the shared browser.
+
+### Recommendation
+
+Require passwords via env vars, enable control protection, and consider binding 8080 to localhost in local-only setups.
+
+---
+
+## Issue #12: Neko Requires SYS_ADMIN Capability
+
+**Status:** Open
+**Priority:** Medium
+**Affected Files:** `workspace/docker-compose.yml`, `workspace/docker-compose.local.yml`
+
+### Description
+
+The Neko container is granted `SYS_ADMIN`, which broadens container privileges.
+
+### Question
+
+Is `SYS_ADMIN` required for Neko's Firefox image? If not, drop the capability or replace with narrower permissions.
+
+---
+
+## Issue #13: Workspace Image Builds Are Not Pinned
+
+**Status:** Open
+**Priority:** Medium
+**Affected Files:** `workspace/Dockerfile`
+
+### Description
+
+The workspace image installs Node.js via a remote setup script and installs global npm packages without pinning:
+
+- `curl -fsSL https://deb.nodesource.com/setup_20.x | bash -`
+- `npm install -g @anthropic-ai/claude-code`
+- `npm install -g pino-pretty`
+
+This can lead to non-reproducible builds and unexpected breakages.
+
+### Recommendation
+
+Pin versions and/or use a base image that already provides Node 20, then install global packages with fixed versions.
+
+---
+
+## Issue #14: Healthchecks Missing in Main/Local Compose
+
+**Status:** Open
+**Priority:** Low
+**Affected Files:** `workspace/docker-compose.yml`, `workspace/docker-compose.local.yml`
+
+### Description
+
+The orchestrator template defines a workspace healthcheck, but the main and local compose files do not, which can delay detection of unhealthy workspaces.
+
+### Recommendation
+
+Add the same healthcheck used in the learner template or document why it's intentionally omitted.
+
+---
+
 ## Resolution Tracking
 
 | Issue | Decision | Resolved In | Date |
@@ -265,6 +361,11 @@ Align terminology with architecture docs:
 | #7 Learner Name | | | |
 | #8 Odehash UI | | | |
 | #9 Terminology | | | |
+| #10 Workspace Auth Default | | | |
+| #11 Neko Credentials | | | |
+| #12 Neko SYS_ADMIN | | | |
+| #13 Workspace Image Pinning | | | |
+| #14 Healthchecks | | | |
 
 ---
 

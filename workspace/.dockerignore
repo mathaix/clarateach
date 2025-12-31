@@ -1,0 +1,36 @@
+# Dependencies
+**/node_modules/
+node_modules/
+__pycache__/
+*.pyc
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+*.md
+docs/
+
+# Tests
+*.test.ts
+*.spec.ts
+vitest.config.ts
+
+# Environment files (secrets)
+.env
+.env.*

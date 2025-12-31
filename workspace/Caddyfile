@@ -1,0 +1,143 @@
+# ClaraTeach Workspace Reverse Proxy
+# Routes requests to workspace containers and neko browser
+#
+# Containers are connected to this network with aliases:
+#   workspace-1 -> seat 1 container
+#   workspace-2 -> seat 2 container
+#   etc.
+#
+# Note: Terminal and file routes keep the /vm/:seat prefix because
+# the workspace server expects them. Only browser routes strip prefix
+# since neko doesn't expect it.
+
+:80 {
+    # Seat 1
+    handle /vm/1/terminal* {
+        reverse_proxy workspace-1:3001
+    }
+    handle /vm/1/files* {
+        reverse_proxy workspace-1:3002
+    }
+    handle /vm/1/browser* {
+        uri strip_prefix /vm/1/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 2
+    handle /vm/2/terminal* {
+        reverse_proxy workspace-2:3001
+    }
+    handle /vm/2/files* {
+        reverse_proxy workspace-2:3002
+    }
+    handle /vm/2/browser* {
+        uri strip_prefix /vm/2/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 3
+    handle /vm/3/terminal* {
+        reverse_proxy workspace-3:3001
+    }
+    handle /vm/3/files* {
+        reverse_proxy workspace-3:3002
+    }
+    handle /vm/3/browser* {
+        uri strip_prefix /vm/3/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 4
+    handle /vm/4/terminal* {
+        reverse_proxy workspace-4:3001
+    }
+    handle /vm/4/files* {
+        reverse_proxy workspace-4:3002
+    }
+    handle /vm/4/browser* {
+        uri strip_prefix /vm/4/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 5
+    handle /vm/5/terminal* {
+        reverse_proxy workspace-5:3001
+    }
+    handle /vm/5/files* {
+        reverse_proxy workspace-5:3002
+    }
+    handle /vm/5/browser* {
+        uri strip_prefix /vm/5/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 6
+    handle /vm/6/terminal* {
+        reverse_proxy workspace-6:3001
+    }
+    handle /vm/6/files* {
+        reverse_proxy workspace-6:3002
+    }
+    handle /vm/6/browser* {
+        uri strip_prefix /vm/6/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 7
+    handle /vm/7/terminal* {
+        reverse_proxy workspace-7:3001
+    }
+    handle /vm/7/files* {
+        reverse_proxy workspace-7:3002
+    }
+    handle /vm/7/browser* {
+        uri strip_prefix /vm/7/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 8
+    handle /vm/8/terminal* {
+        reverse_proxy workspace-8:3001
+    }
+    handle /vm/8/files* {
+        reverse_proxy workspace-8:3002
+    }
+    handle /vm/8/browser* {
+        uri strip_prefix /vm/8/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 9
+    handle /vm/9/terminal* {
+        reverse_proxy workspace-9:3001
+    }
+    handle /vm/9/files* {
+        reverse_proxy workspace-9:3002
+    }
+    handle /vm/9/browser* {
+        uri strip_prefix /vm/9/browser
+        reverse_proxy neko:8080
+    }
+
+    # Seat 10
+    handle /vm/10/terminal* {
+        reverse_proxy workspace-10:3001
+    }
+    handle /vm/10/files* {
+        reverse_proxy workspace-10:3002
+    }
+    handle /vm/10/browser* {
+        uri strip_prefix /vm/10/browser
+        reverse_proxy neko:8080
+    }
+
+    # Health check
+    handle /health {
+        respond "OK" 200
+    }
+
+    # Default: 404
+    handle {
+        respond "Not Found" 404
+    }
+}
