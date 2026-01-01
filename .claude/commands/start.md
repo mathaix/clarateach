@@ -1,14 +1,15 @@
 Start ClaraTeach development services.
 
-Run the stack script to start all services:
+Run in separate terminals:
 
+**Backend (port 8080):**
 ```bash
-./scripts/stack.sh start
+./scripts/start-backend.sh
 ```
 
-This starts:
-- Workspace containers (Docker Compose)
-- Portal API on http://localhost:4000
-- Frontend on http://localhost:5173
+**Frontend (port 5173):**
+```bash
+./scripts/start-frontend.sh
+```
 
-After starting, verify the services are running with `./scripts/stack.sh status`.
+The frontend proxies `/api` requests to the backend automatically.

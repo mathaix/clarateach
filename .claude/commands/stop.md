@@ -1,12 +1,11 @@
 Stop ClaraTeach development services.
 
-Run the stack script to stop all services:
+Press `Ctrl+C` in the terminal running each service, or:
 
 ```bash
-./scripts/stack.sh stop
-```
+# Kill backend (port 8080)
+lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "Backend not running"
 
-This stops:
-- Frontend dev server
-- Portal API
-- Workspace containers
+# Kill frontend (port 5173)
+lsof -ti:5173 | xargs kill -9 2>/dev/null || echo "Frontend not running"
+```

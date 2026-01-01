@@ -1,12 +1,13 @@
 Check the status of ClaraTeach development services.
 
-Run:
-
 ```bash
-./scripts/stack.sh status
+# Check if backend is running (port 8080)
+curl -s http://localhost:8080/api/health && echo " Backend OK" || echo "Backend not running"
+
+# Check if frontend is running (port 5173)
+curl -s http://localhost:5173 >/dev/null && echo "Frontend OK" || echo "Frontend not running"
 ```
 
-This shows the status of:
-- Workspace containers
-- Portal API (http://localhost:4000)
-- Frontend (http://localhost:5173)
+Services:
+- Backend: http://localhost:8080
+- Frontend: http://localhost:5173
