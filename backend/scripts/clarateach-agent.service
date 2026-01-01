@@ -1,0 +1,18 @@
+[Unit]
+Description=ClaraTeach Worker Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=IMAGES_DIR=/var/lib/clarateach/images
+Environment=SOCKET_DIR=/tmp/clarateach
+ExecStartPre=/bin/bash -c 'AGENT_TOKEN=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/agent-token 2>/dev/null || echo ""); echo "AGENT_TOKEN=$AGENT_TOKEN" > /run/clarateach-agent.env'
+EnvironmentFile=-/run/clarateach-agent.env
+ExecStart=/usr/local/bin/agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
