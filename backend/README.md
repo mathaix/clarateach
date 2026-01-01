@@ -197,7 +197,9 @@ Firecracker requires KVM. On GCP, you must create VMs with **nested virtualizati
 ### Create a New Worker VM
 
 ```bash
+# Using spot instance for cost savings (~60-90% cheaper)
 gcloud compute instances create clara-worker \
+  --project=clarateach \
   --zone=us-central1-b \
   --machine-type=n2-standard-8 \
   --enable-nested-virtualization \
@@ -205,8 +207,11 @@ gcloud compute instances create clara-worker \
   --image-family=debian-12 \
   --image-project=debian-cloud \
   --boot-disk-size=50GB \
-  --project=clarateach
+  --provisioning-model=SPOT \
+  --instance-termination-action=STOP
 ```
+
+> **Note:** Spot instances can be preempted by GCP. Use `--instance-termination-action=STOP` to stop (not delete) the VM when preempted, preserving the disk.
 
 ### Migrate Existing VM to Nested Virtualization
 
@@ -225,14 +230,16 @@ gcloud compute instances delete clara2 \
   --project=clarateach \
   --quiet
 
-# 3. Create new VM with nested virtualization from snapshot
+# 3. Create new VM with nested virtualization from snapshot (spot instance)
 gcloud compute instances create clara2 \
+  --project=clarateach \
   --zone=us-central1-b \
   --machine-type=n2-standard-8 \
   --enable-nested-virtualization \
   --min-cpu-platform="Intel Haswell" \
   --create-disk=boot=yes,source-snapshot=clara2-snapshot,size=50GB,auto-delete=yes \
-  --project=clarateach
+  --provisioning-model=SPOT \
+  --instance-termination-action=STOP
 ```
 
 ### Verify KVM is Available
