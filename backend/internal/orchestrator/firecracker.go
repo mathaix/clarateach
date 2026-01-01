@@ -335,7 +335,13 @@ func detectPrimaryInterface() (string, error) {
 		return "", err
 	}
 	for _, route := range routes {
-		if route.Dst == nil { // Default route
+		// Default route: Dst is nil OR 0.0.0.0/0
+		isDefault := route.Dst == nil
+		if !isDefault && route.Dst != nil {
+			ones, _ := route.Dst.Mask.Size()
+			isDefault = route.Dst.IP.IsUnspecified() && ones == 0
+		}
+		if isDefault {
 			link, err := netlink.LinkByIndex(route.LinkIndex)
 			if err != nil {
 				continue
