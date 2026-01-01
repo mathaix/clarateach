@@ -20,12 +20,13 @@ import (
 )
 
 type Server struct {
-	router                *chi.Mux
-	store                 store.Store
-	provisioner           provisioner.Provisioner
-	firecrackerProvisioner *provisioner.FirecrackerProvisioner
-	useSpotVMs            bool
-	authDisabled          bool
+	router                    *chi.Mux
+	store                     store.Store
+	provisioner               provisioner.Provisioner
+	firecrackerProvisioner    *provisioner.FirecrackerProvisioner    // Local Firecracker
+	gcpFirecrackerProvisioner *provisioner.GCPFirecrackerProvider    // GCP + Firecracker
+	useSpotVMs                bool
+	authDisabled              bool
 }
 
 func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool, authDisabled bool) *Server {
@@ -37,23 +38,36 @@ func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool,
 		authDisabled: authDisabled,
 	}
 
-	// Initialize Firecracker provisioner (optional - may fail if not on Linux with KVM)
+	// Initialize local Firecracker provisioner (optional - may fail if not on Linux with KVM)
 	fcProv, err := provisioner.NewFirecrackerProvisioner()
 	if err != nil {
-		log.Printf("Firecracker provisioner not available: %v", err)
+		log.Printf("Local Firecracker provisioner not available: %v", err)
 	} else {
 		s.firecrackerProvisioner = fcProv
-		log.Printf("Firecracker provisioner initialized")
+		log.Printf("Local Firecracker provisioner initialized")
 	}
 
 	s.routes()
 	return s
 }
 
+// SetGCPFirecrackerProvisioner sets the GCP Firecracker provisioner
+func (s *Server) SetGCPFirecrackerProvisioner(prov *provisioner.GCPFirecrackerProvider) {
+	s.gcpFirecrackerProvisioner = prov
+	log.Printf("GCP Firecracker provisioner initialized")
+}
+
 // getProvisioner returns the appropriate provisioner based on runtime type
 func (s *Server) getProvisioner(runtimeType string) provisioner.Provisioner {
-	if runtimeType == "firecracker" && s.firecrackerProvisioner != nil {
-		return s.firecrackerProvisioner
+	if runtimeType == "firecracker" {
+		// Prefer GCP Firecracker provisioner (creates GCP VM + MicroVMs)
+		if s.gcpFirecrackerProvisioner != nil {
+			return s.gcpFirecrackerProvisioner
+		}
+		// Fall back to local Firecracker provisioner (for dev/testing)
+		if s.firecrackerProvisioner != nil {
+			return s.firecrackerProvisioner
+		}
 	}
 	return s.provisioner
 }

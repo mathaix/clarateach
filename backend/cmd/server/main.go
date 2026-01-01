@@ -38,6 +38,10 @@ func main() {
 	useSpotVMs := os.Getenv("GCP_USE_SPOT") == "true"
 	authDisabled := os.Getenv("AUTH_DISABLED") == "true"
 
+	// Firecracker configuration (optional)
+	fcSnapshotName := os.Getenv("FC_SNAPSHOT_NAME") // e.g., "clara2-snapshot"
+	fcAgentToken := os.Getenv("FC_AGENT_TOKEN")     // Token for agent authentication
+
 	// 1. Initialize Store
 	db, err := store.InitDB(dbPath)
 	if err != nil {
@@ -56,14 +60,26 @@ func main() {
 	// 3. Initialize API Server
 	apiServer := api.NewServer(st, vmProvisioner, useSpotVMs, authDisabled)
 
-	// CORS Middleware
+	// 4. Initialize GCP Firecracker Provisioner (optional)
+	if fcSnapshotName != "" {
+		log.Printf("Initializing GCP Firecracker provisioner with snapshot: %s", fcSnapshotName)
+		fcProvisioner := provisioner.NewGCPFirecrackerProvider(provisioner.GCPFirecrackerConfig{
+			Project:      gcpProject,
+			Zone:         gcpZone,
+			SnapshotName: fcSnapshotName,
+			AgentToken:   fcAgentToken,
+		})
+		apiServer.SetGCPFirecrackerProvisioner(fcProvisioner)
+	}
+
+	// 5. CORS Middleware
 	corsHandler := cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 	})
 
-	// 4. Root Handler
+	// 6. Root Handler
 	rootHandler := corsHandler(apiServer)
 
 	log.Printf("ClaraTeach Backend running on port %s", port)
