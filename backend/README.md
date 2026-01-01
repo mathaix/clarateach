@@ -190,6 +190,69 @@ WORKER_AGENTS='[{"address":"worker1:9090","token":"secret"}]' ./server
 
 ---
 
+## GCP Worker VM Setup
+
+Firecracker requires KVM. On GCP, you must create VMs with **nested virtualization** enabled.
+
+### Create a New Worker VM
+
+```bash
+gcloud compute instances create clara-worker \
+  --zone=us-central1-b \
+  --machine-type=n2-standard-8 \
+  --enable-nested-virtualization \
+  --min-cpu-platform="Intel Haswell" \
+  --image-family=debian-12 \
+  --image-project=debian-cloud \
+  --boot-disk-size=50GB \
+  --project=clarateach
+```
+
+### Migrate Existing VM to Nested Virtualization
+
+You cannot enable nested virtualization on an existing VM. You must recreate it:
+
+```bash
+# 1. Create snapshot of current disk
+gcloud compute disks snapshot clara2 \
+  --zone=us-central1-b \
+  --snapshot-names=clara2-snapshot \
+  --project=clarateach
+
+# 2. Delete the VM
+gcloud compute instances delete clara2 \
+  --zone=us-central1-b \
+  --project=clarateach \
+  --quiet
+
+# 3. Create new VM with nested virtualization from snapshot
+gcloud compute instances create clara2 \
+  --zone=us-central1-b \
+  --machine-type=n2-standard-8 \
+  --enable-nested-virtualization \
+  --min-cpu-platform="Intel Haswell" \
+  --create-disk=boot=yes,source-snapshot=clara2-snapshot,size=50GB,auto-delete=yes \
+  --project=clarateach
+```
+
+### Verify KVM is Available
+
+```bash
+# SSH into the VM
+gcloud compute ssh clara2 --zone=us-central1-b --project=clarateach
+
+# Check for /dev/kvm
+ls -la /dev/kvm
+```
+
+### Requirements
+
+- **Machine type:** N1, N2, or C2 (not E2 or N2D)
+- **CPU platform:** Intel Haswell or later
+- **Disk:** 50GB recommended (rootfs is 2GB per VM)
+
+---
+
 ## Scripts
 
 | Script | Purpose | Status |
