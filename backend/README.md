@@ -203,7 +203,6 @@ gcloud compute instances create clara-worker \
   --zone=us-central1-b \
   --machine-type=n2-standard-8 \
   --enable-nested-virtualization \
-  --min-cpu-platform="Intel Haswell" \
   --image-family=debian-12 \
   --image-project=debian-cloud \
   --boot-disk-size=50GB \
@@ -236,7 +235,6 @@ gcloud compute instances create clara2 \
   --zone=us-central1-b \
   --machine-type=n2-standard-8 \
   --enable-nested-virtualization \
-  --min-cpu-platform="Intel Haswell" \
   --create-disk=boot=yes,source-snapshot=clara2-snapshot,size=50GB,auto-delete=yes \
   --provisioning-model=SPOT \
   --instance-termination-action=STOP
@@ -255,7 +253,6 @@ ls -la /dev/kvm
 ### Requirements
 
 - **Machine type:** N1, N2, or C2 (not E2 or N2D)
-- **CPU platform:** Intel Haswell or later
 - **Disk:** 50GB recommended (rootfs is 2GB per VM)
 
 ---
