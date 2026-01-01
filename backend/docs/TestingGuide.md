@@ -2,6 +2,15 @@
 
 This guide explains how to test the Firecracker MicroVM flow on ClaraTeach.
 
+## Quick Start
+
+There are two test scripts available:
+
+| Script | What it tests | Where to run |
+|--------|--------------|--------------|
+| `./scripts/test-e2e-local.sh` | Agent + MicroVMs only | On clara2 (the worker VM) |
+| `./scripts/test-e2e-gcp.sh` | Full flow: Backend → GCP → Agent → MicroVMs | Anywhere with backend access |
+
 ## Architecture Overview
 
 Think of it like Russian nesting dolls:
@@ -255,3 +264,92 @@ AGENT_URL=http://192.168.1.100:9090 ./scripts/test-e2e-local.sh
 # With authentication token
 AGENT_TOKEN=secret123 ./scripts/test-e2e-local.sh
 ```
+
+## Accessing the User Interface
+
+Once MicroVMs are running, users can access two interfaces:
+
+### Terminal (WebSocket on port 3001)
+
+The terminal provides a web-based shell into the MicroVM workspace.
+
+**Via Proxy (Recommended):**
+```
+ws://<agent-ip>:9090/proxy/<workshop-id>/<seat-id>/terminal
+```
+
+**Direct (internal network only):**
+```
+ws://192.168.100.<10+seat>/3001
+```
+
+Example with websocat:
+```bash
+# Install websocat
+cargo install websocat
+
+# Connect to terminal
+websocat ws://34.68.136.93:9090/proxy/my-workshop/1/terminal
+```
+
+### Files API (HTTP on port 3002)
+
+The file server provides a REST API for file operations.
+
+**Via Proxy (Recommended):**
+```
+http://<agent-ip>:9090/proxy/<workshop-id>/<seat-id>/files/
+```
+
+**Direct (internal network only):**
+```
+http://192.168.100.<10+seat>:3002/
+```
+
+**API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| GET | `/files/` | List files in workspace |
+| GET | `/files/<path>` | Read file content |
+| POST | `/files/<path>` | Create/update file |
+| DELETE | `/files/<path>` | Delete file |
+
+Example:
+```bash
+# List files
+curl http://34.68.136.93:9090/proxy/my-workshop/1/files/
+
+# Create a file
+curl -X POST http://34.68.136.93:9090/proxy/my-workshop/1/files/hello.txt \
+  -H "Content-Type: text/plain" \
+  -d "Hello, World!"
+
+# Read the file
+curl http://34.68.136.93:9090/proxy/my-workshop/1/files/hello.txt
+```
+
+## Full GCP Test Script
+
+For testing the complete flow from backend API to working MicroVMs:
+
+```bash
+# Start the backend first
+GCP_PROJECT=clarateach \
+GCP_ZONE=us-central1-b \
+GCP_REGISTRY=us-central1-docker.pkg.dev/clarateach/clarateach \
+FC_SNAPSHOT_NAME=clara2-snapshot \
+go run ./cmd/server/
+
+# In another terminal, run the full E2E test
+./scripts/test-e2e-gcp.sh
+```
+
+The script will:
+1. Create a workshop via the backend API
+2. Wait for GCP VM to be provisioned
+3. Verify agent is healthy
+4. Check MicroVM services
+5. Display access URLs for each seat
+6. Wait for you to press Enter before cleanup
