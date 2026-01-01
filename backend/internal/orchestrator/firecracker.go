@@ -106,7 +106,12 @@ func (f *FirecrackerProvider) Create(ctx context.Context, cfg InstanceConfig) (*
 	}
 
 	// 2. Create TAP device
-	tapName := fmt.Sprintf("tap%s%d", cfg.WorkshopID[:8], cfg.SeatID)
+	// Use up to 8 chars of workshop ID, handling short IDs
+	workshopPrefix := cfg.WorkshopID
+	if len(workshopPrefix) > 8 {
+		workshopPrefix = workshopPrefix[:8]
+	}
+	tapName := fmt.Sprintf("tap%s%d", workshopPrefix, cfg.SeatID)
 	if len(tapName) > 15 {
 		tapName = tapName[:15] // Linux interface name limit
 	}
@@ -162,20 +167,23 @@ func (f *FirecrackerProvider) Create(ctx context.Context, cfg InstanceConfig) (*
 	}
 
 	// Create the machine
+	// Use background context for the VM process so it survives beyond the HTTP request
 	cmd := firecracker.VMCommandBuilder{}.
 		WithBin(f.config.FirecrackerPath).
 		WithSocketPath(socketPath).
-		Build(ctx)
+		Build(context.Background())
 
-	machine, err := firecracker.NewMachine(ctx, fcCfg, firecracker.WithProcessRunner(cmd), firecracker.WithLogger(logrus.NewEntry(f.logger)))
+	// Use background context for the machine so it survives beyond the HTTP request
+	machineCtx := context.Background()
+	machine, err := firecracker.NewMachine(machineCtx, fcCfg, firecracker.WithProcessRunner(cmd), firecracker.WithLogger(logrus.NewEntry(f.logger)))
 	if err != nil {
 		os.Remove(vmRootfs)
 		f.deleteTAP(tapName)
 		return nil, fmt.Errorf("failed to create Firecracker machine: %w", err)
 	}
 
-	// Start the machine
-	if err := machine.Start(ctx); err != nil {
+	// Start the machine with background context
+	if err := machine.Start(machineCtx); err != nil {
 		os.Remove(vmRootfs)
 		f.deleteTAP(tapName)
 		return nil, fmt.Errorf("failed to start Firecracker machine: %w", err)
