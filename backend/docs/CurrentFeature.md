@@ -1,5 +1,7 @@
 # Current Feature: GCP + Firecracker End-to-End Integration
 
+> **Workflow**: See [CurrentFeatureWorkflow.md](CurrentFeatureWorkflow.md) for how this document is managed through the release cycle.
+
 ## Overview
 
 Enable the full production flow where the backend orchestrates everything:
