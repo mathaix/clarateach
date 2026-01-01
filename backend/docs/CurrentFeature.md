@@ -196,11 +196,11 @@ SEATS=3
 The current init script runs `sleep infinity`. Need to restore the Node.js workspace server.
 
 **Tasks**:
-- [ ] Debug why Node.js server fails to start
-- [ ] Fix init script in rootfs
-- [ ] Rebuild rootfs
+- [x] Debug why Node.js server fails to start (missing `ip` command for networking)
+- [x] Fix init script in rootfs (simplified, added explicit init= kernel param)
+- [x] Rebuild rootfs (with ip command and libraries)
 - [ ] Update clara2 snapshot with new rootfs
-- [ ] Verify terminal and file API work inside MicroVM
+- [x] Verify terminal and file API work inside MicroVM
 
 ## Current State
 
@@ -213,7 +213,7 @@ The current init script runs `sleep infinity`. Need to restore the Node.js works
 | Agent proxy | ✅ Created | Phase 2 complete - WebSocket + HTTP proxy |
 | Agent systemd service | ✅ Running | Phase 3 complete - service enabled on clara2 |
 | E2E test script | ✅ Created | Phase 4 complete - 14 tests pass |
-| Workspace server in MicroVM | ⚠️ Broken | Exits immediately, using sleep infinity |
+| Workspace server in MicroVM | ✅ Working | Terminal (3001) + Files (3002) servers running |
 
 ## Prerequisites
 
