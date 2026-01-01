@@ -20,11 +20,12 @@ import (
 )
 
 type Server struct {
-	router       *chi.Mux
-	store        store.Store
-	provisioner  provisioner.Provisioner
-	useSpotVMs   bool
-	authDisabled bool
+	router                *chi.Mux
+	store                 store.Store
+	provisioner           provisioner.Provisioner
+	firecrackerProvisioner *provisioner.FirecrackerProvisioner
+	useSpotVMs            bool
+	authDisabled          bool
 }
 
 func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool, authDisabled bool) *Server {
@@ -35,8 +36,26 @@ func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool,
 		useSpotVMs:   useSpotVMs,
 		authDisabled: authDisabled,
 	}
+
+	// Initialize Firecracker provisioner (optional - may fail if not on Linux with KVM)
+	fcProv, err := provisioner.NewFirecrackerProvisioner()
+	if err != nil {
+		log.Printf("Firecracker provisioner not available: %v", err)
+	} else {
+		s.firecrackerProvisioner = fcProv
+		log.Printf("Firecracker provisioner initialized")
+	}
+
 	s.routes()
 	return s
+}
+
+// getProvisioner returns the appropriate provisioner based on runtime type
+func (s *Server) getProvisioner(runtimeType string) provisioner.Provisioner {
+	if runtimeType == "firecracker" && s.firecrackerProvisioner != nil {
+		return s.firecrackerProvisioner
+	}
+	return s.provisioner
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +228,7 @@ func (s *Server) createWorkshop(w http.ResponseWriter, r *http.Request) {
 		vmConfig.Spot = s.useSpotVMs
 		vmConfig.SSHPublicKey = keyPair.PublicKey
 		vmConfig.AuthDisabled = s.authDisabled
+		vmConfig.RuntimeType = workshop.RuntimeType
 
 		// Track provisioning time
 		provisioningStartedAt := time.Now()
@@ -217,7 +237,9 @@ func (s *Server) createWorkshop(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		vmInstance, err := s.provisioner.CreateVM(ctx, vmConfig)
+		// Use runtime-specific provisioner
+		prov := s.getProvisioner(workshop.RuntimeType)
+		vmInstance, err := prov.CreateVM(ctx, vmConfig)
 		if err != nil {
 			log.Printf("Failed to provision VM: %v", err)
 			s.store.UpdateWorkshopStatus(workshop.ID, "error")
@@ -293,7 +315,8 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 
 	// Try to get VM info for the IP
 	ctx := r.Context()
-	if vm, err := s.provisioner.GetVM(ctx, id); err == nil && vm != nil {
+	prov := s.getProvisioner(workshop.RuntimeType)
+	if vm, err := prov.GetVM(ctx, id); err == nil && vm != nil {
 		resp["vm_ip"] = vm.ExternalIP
 		resp["vm_status"] = vm.Status
 	}
@@ -304,19 +327,32 @@ func (s *Server) getWorkshop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteWorkshop(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
+	// Get workshop to determine runtime type
+	workshop, err := s.store.GetWorkshop(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if workshop == nil {
+		http.Error(w, "Workshop not found", http.StatusNotFound)
+		return
+	}
+	runtimeType := workshop.RuntimeType
+
 	// Set status to "deleting" immediately for UI feedback
 	if err := s.store.UpdateWorkshopStatus(id, "deleting"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Delete the GCP VM asynchronously, then set status to "deleted"
+	// Delete the VM asynchronously, then set status to "deleted"
 	go func() {
-		log.Printf("Deleting GCP VM for workshop %s (async)", id)
+		log.Printf("Deleting VM for workshop %s (runtime: %s, async)", id, runtimeType)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		if err := s.provisioner.DeleteVM(ctx, id); err != nil {
+		prov := s.getProvisioner(runtimeType)
+		if err := prov.DeleteVM(ctx, id); err != nil {
 			log.Printf("Failed to delete VM for workshop %s: %v", id, err)
 		} else {
 			log.Printf("VM deleted successfully for workshop %s", id)
@@ -356,13 +392,16 @@ func (s *Server) stopWorkshop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the GCP VM asynchronously, then set status to "stopped"
+	runtimeType := workshop.RuntimeType
+
+	// Delete the VM asynchronously, then set status to "stopped"
 	go func() {
-		log.Printf("Stopping workshop %s - deleting GCP VM (async)", id)
+		log.Printf("Stopping workshop %s - deleting VM (runtime: %s, async)", id, runtimeType)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		if err := s.provisioner.DeleteVM(ctx, id); err != nil {
+		prov := s.getProvisioner(runtimeType)
+		if err := prov.DeleteVM(ctx, id); err != nil {
 			log.Printf("Failed to delete VM for workshop %s: %v", id, err)
 		} else {
 			log.Printf("VM deleted successfully for workshop %s", id)
@@ -418,13 +457,15 @@ func (s *Server) startWorkshop(w http.ResponseWriter, r *http.Request) {
 	vmConfig.Spot = s.useSpotVMs
 	vmConfig.SSHPublicKey = keyPair.PublicKey
 	vmConfig.AuthDisabled = s.authDisabled
+	vmConfig.RuntimeType = workshop.RuntimeType
 
 	// Track provisioning time
 	provisioningStartedAt := time.Now()
 
-	// Provision VM
+	// Provision VM using runtime-specific provisioner
 	ctx := r.Context()
-	vmInstance, err := s.provisioner.CreateVM(ctx, vmConfig)
+	prov := s.getProvisioner(workshop.RuntimeType)
+	vmInstance, err := prov.CreateVM(ctx, vmConfig)
 	if err != nil {
 		log.Printf("Failed to provision VM: %v", err)
 		s.store.UpdateWorkshopStatus(id, "error")

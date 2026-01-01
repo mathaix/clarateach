@@ -26,6 +26,9 @@ RUN apt-get update && apt-get install -y \
     # Terminal utilities
     tmux \
     htop \
+    # Networking tools (needed for Firecracker VM networking)
+    iproute2 \
+    iputils-ping \
     # Required for node-pty
     make \
     g++ \
