@@ -84,6 +84,13 @@ func (s *Server) routes() {
 			r.Get("/{workshopID}/{seatID}", s.handleGetVM)
 			r.Delete("/{workshopID}/{seatID}", s.handleDestroyVM)
 		})
+
+		// Proxy routes to MicroVM services
+		r.Route("/proxy", func(r chi.Router) {
+			r.Get("/{workshopID}/{seatID}/terminal", s.handleTerminalProxy)
+			r.HandleFunc("/{workshopID}/{seatID}/files/*", s.handleFilesProxy)
+			r.Get("/{workshopID}/{seatID}/health", s.handleHealthProxy)
+		})
 	})
 }
 
