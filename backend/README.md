@@ -1,47 +1,217 @@
-# ClaraTeach Unified Backend
+# ClaraTeach Backend
 
-This is the new Go-based backend for ClaraTeach. It replaces the legacy Node.js Portal and Bash orchestration scripts.
+Go-based backend for ClaraTeach. Supports both Docker containers and Firecracker MicroVMs for isolated learner environments.
 
-## Features
+## Binaries
 
-*   **Unified Binary:** Contains API, Database, and Orchestrator.
-*   **Persistence:** Uses SQLite (by default) to save state, preventing data loss on restart.
-*   **Robust Orchestration:** Uses the native Docker SDK instead of shell scripts.
-*   **Dynamic Proxy:** Automatically routes traffic (WebSockets/HTTP) to the correct learner container based on the subdomain.
+| Binary | Purpose | Runs On |
+|--------|---------|---------|
+| `cmd/server/` | Control Plane API | Cloud Run / Controller VM |
+| `cmd/agent/` | Worker Agent (Firecracker) | Worker VMs (KVM-enabled) |
+| `cmd/rootfs-builder/` | Build rootfs images | Build machine |
+| `cmd/vmctl/` | GCP VM management CLI | Developer machine |
+
+### Build All
+
+```bash
+cd backend
+go build ./...
+```
+
+---
+
+## cmd/server (Control Plane)
+
+The main API server that handles workshops, sessions, and orchestration.
+
+```bash
+# Build
+go build -o server ./cmd/server/
+
+# Run
+./server
+```
+
+**Environment Variables:**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP listen port | `8080` |
+| `DATABASE_URL` | SQLite database path | `./clarateach.db` |
+| `GCP_PROJECT` | GCP project ID | - |
+| `GCP_ZONE` | GCP zone | `us-central1-a` |
+| `WORKER_AGENTS` | JSON array of worker configs (distributed mode) | - |
+
+**Distributed Mode (Firecracker):**
+```bash
+WORKER_AGENTS='[{"address":"10.0.0.10:9090","token":"secret1"}]' ./server
+```
+
+---
+
+## cmd/agent (Worker Agent)
+
+Runs on KVM-enabled VMs to manage local Firecracker MicroVMs. Exposes HTTP API on port 9090.
+
+```bash
+# Build
+go build -o agent ./cmd/agent/
+
+# Run
+./agent
+```
+
+**Environment Variables:**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | HTTP listen port | `9090` |
+| `AGENT_TOKEN` | Auth token (or via GCP metadata) | - |
+| `IMAGES_DIR` | Kernel/rootfs directory | `/var/lib/clarateach/images` |
+| `SOCKET_DIR` | Firecracker socket directory | `/tmp/clarateach` |
+| `BRIDGE_NAME` | Network bridge name | `clarateach0` |
+| `BRIDGE_IP` | Bridge IP CIDR | `192.168.100.1/24` |
+| `CAPACITY` | Max VMs per worker | `50` |
+
+**API Endpoints:**
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/health` | No | Health check |
+| GET | `/info` | Yes | Worker info |
+| POST | `/vms` | Yes | Create VM |
+| GET | `/vms` | Yes | List VMs |
+| GET | `/vms/{workshopID}/{seatID}` | Yes | Get VM |
+| DELETE | `/vms/{workshopID}/{seatID}` | Yes | Destroy VM |
+
+---
+
+## cmd/rootfs-builder
+
+Builds ext4 rootfs images for Firecracker from Docker images.
+
+```bash
+# Build
+go build -o rootfs-builder ./cmd/rootfs-builder/
+
+# Create rootfs from existing Docker image
+sudo ./rootfs-builder --image clarateach-workspace --output ./rootfs.ext4
+
+# Build from Dockerfile
+sudo ./rootfs-builder --dockerfile ./workspace/Dockerfile --output ./rootfs.ext4 --size 4G
+```
+
+**Flags:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--image` | Docker image name | (required) |
+| `--dockerfile` | Path to Dockerfile | - |
+| `--output` | Output path for rootfs.ext4 | (required) |
+| `--size` | Rootfs size | `2G` |
+| `--init-script` | Custom init script path | - |
+| `--verbose` | Enable verbose logging | `false` |
+
+**Requirements:**
+- Docker
+- `mkfs.ext4` (e2fsprogs)
+- `sudo` (for mount/umount)
+
+---
+
+## cmd/vmctl
+
+CLI for managing GCP VMs directly (for testing/debugging).
+
+```bash
+# Build
+go build -o vmctl ./cmd/vmctl/
+
+# Create VM
+./vmctl create --workshop ws-123 --seats 5
+
+# List VMs
+./vmctl list
+
+# Delete VM
+./vmctl delete --workshop ws-123
+```
+
+**Environment Variables:**
+| Variable | Description |
+|----------|-------------|
+| `GCP_PROJECT` | GCP project ID |
+| `GCP_ZONE` | GCP zone (default: us-central1-a) |
+| `GCP_REGISTRY` | Container registry URL |
+
+---
 
 ## Architecture
 
+### Single-Box Mode (Development)
 ```
-[ Browser ] -> [ Caddy (SSL) ] -> [ Go Backend ]
-                                        |
-                                        +--> [ API (REST) ]
-                                        +--> [ SQLite DB ]
-                                        +--> [ Orchestrator ] -> [ Docker / Firecracker ]
-                                        +--> [ Proxy ] -> [ Learner Container ]
+[ Browser ] --> [ server:8080 ] --> [ Docker / Local Firecracker ]
 ```
 
-## Running (Local Dev)
+### Distributed Mode (Production)
+```
+[ Browser ] --> [ Cloud Run: server ] --> [ Worker VMs: agent:9090 ]
+                                                    |
+                                                    v
+                                          [ Firecracker MicroVMs ]
+```
 
-You can run this without installing Go by using the helper script:
+---
 
+## Quick Start
+
+### Docker Mode (Default)
 ```bash
-./scripts/run_backend_docker.sh
+cd backend
+go run ./cmd/server/
 ```
 
-This will:
-1.  Download a Go environment.
-2.  Mount the `backend/` code.
-3.  Connect to your local Docker daemon.
-4.  Start the server on port `8080`.
+### Firecracker Mode (Local)
+```bash
+# 1. Setup Firecracker (one-time)
+sudo ../scripts/setup-firecracker.sh
 
-## API Endpoints
+# 2. Build rootfs
+sudo ./rootfs-builder --image clarateach-workspace --output /var/lib/clarateach/images/rootfs.ext4
 
-*   `GET /api/workshops`: List workshops
-*   `POST /api/workshops`: Create a workshop
-*   `POST /api/join`: Join a workshop (returns JWT and Endpoint)
+# 3. Run server
+go run ./cmd/server/
+```
 
-## Transition Plan
+### Firecracker Mode (Distributed)
+```bash
+# On Worker VMs:
+./agent
 
-1.  Stop the old Node.js portal (`npm stop` in `portal/`).
-2.  Start this backend.
-3.  Update your `Caddyfile` to point to `localhost:8080`.
+# On Control Plane:
+WORKER_AGENTS='[{"address":"worker1:9090","token":"secret"}]' ./server
+```
+
+---
+
+## Scripts
+
+| Script | Purpose | Status |
+|--------|---------|--------|
+| `scripts/setup-firecracker.sh` | Download Firecracker + kernel | Active |
+| `scripts/build-rootfs.sh` | Build rootfs (shell version) | Legacy (use `rootfs-builder`) |
+| `scripts/run_backend_docker.sh` | Run backend in Docker | Active |
+| `scripts/run_backend_local.sh` | Run backend locally | Active |
+
+---
+
+## API Overview
+
+### Workshops
+- `GET /api/workshops` - List workshops
+- `POST /api/workshops` - Create workshop
+- `DELETE /api/workshops/{id}` - Delete workshop
+
+### Sessions
+- `POST /api/join` - Join workshop (returns JWT + endpoint)
+- `GET /api/session/{code}` - Get session by code
+
+### Admin
+- `GET /api/admin/overview` - Dashboard overview
+- `GET /api/admin/vms` - List all VMs
