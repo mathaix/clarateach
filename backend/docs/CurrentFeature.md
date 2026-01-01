@@ -94,12 +94,12 @@ func (p *GCPFirecrackerProvisioner) CreateVM(ctx context.Context, cfg VMConfig) 
 ```
 
 **Tasks**:
-- [ ] Create `gcp_firecracker.go` with provisioner struct
-- [ ] Implement `CreateVM` - create VM from snapshot
-- [ ] Implement `waitForExternalIP` - poll until IP assigned
-- [ ] Implement `waitForAgentHealth` - poll agent /health endpoint
-- [ ] Implement `createMicroVMs` - call agent API for each seat
-- [ ] Implement `DeleteVM` - destroy MicroVMs then delete GCP VM
+- [x] Create `gcp_firecracker.go` with provisioner struct
+- [x] Implement `CreateVM` - create VM from snapshot
+- [x] Implement `waitForExternalIP` - poll until IP assigned
+- [x] Implement `waitForAgentHealth` - poll agent /health endpoint
+- [x] Implement `createMicroVMs` - call agent API for each seat
+- [x] Implement `DeleteVM` - destroy MicroVMs then delete GCP VM
 - [ ] Add unit tests
 
 ### Phase 2: Agent Proxy for User Access
@@ -114,9 +114,9 @@ Add reverse proxy to route user traffic to MicroVMs.
 | `/proxy/{workshopID}/{seatID}/files/*` | `192.168.100.{10+seatID}:3002` | HTTP |
 
 **Tasks**:
-- [ ] Create `proxy.go` with WebSocket proxy handler
-- [ ] Create HTTP reverse proxy handler
-- [ ] Register routes in `server.go`
+- [x] Create `proxy.go` with WebSocket proxy handler
+- [x] Create HTTP reverse proxy handler
+- [x] Register routes in `server.go`
 - [ ] Test WebSocket connection through proxy
 - [ ] Test file API through proxy
 
@@ -209,8 +209,8 @@ The current init script runs `sleep infinity`. Need to restore the Node.js works
 | Agent | ✅ Working | Creates MicroVMs, fixed context issue |
 | Firecracker orchestrator | ✅ Working | Network bridge, TAP devices working |
 | GCP provisioner (Docker) | ✅ Exists | Creates VMs with Docker containers |
-| GCP+Firecracker provisioner | ❌ Missing | Need to create |
-| Agent proxy | ❌ Missing | Need to create |
+| GCP+Firecracker provisioner | ✅ Created | Phase 1 complete - creates spot VMs from snapshot |
+| Agent proxy | ✅ Created | Phase 2 complete - WebSocket + HTTP proxy |
 | Agent systemd service | ❌ Missing | Need to set up on clara2 |
 | E2E test script | ❌ Missing | Need to create |
 | Workspace server in MicroVM | ⚠️ Broken | Exits immediately, using sleep infinity |
