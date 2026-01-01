@@ -262,9 +262,34 @@ ls -la /dev/kvm
 | Script | Purpose | Status |
 |--------|---------|--------|
 | `scripts/setup-firecracker.sh` | Download Firecracker + kernel | Active |
+| `scripts/test-firecracker.sh` | Test Firecracker VM creation | Active |
 | `scripts/build-rootfs.sh` | Build rootfs (shell version) | Legacy (use `rootfs-builder`) |
 | `scripts/run_backend_docker.sh` | Run backend in Docker | Active |
 | `scripts/run_backend_local.sh` | Run backend locally | Active |
+
+### Testing Firecracker
+
+Run the test script to verify Firecracker VM creation works:
+
+```bash
+sudo ./scripts/test-firecracker.sh
+```
+
+This will:
+1. Build the agent
+2. Start the agent on port 9090
+3. Create 3 test VMs
+4. Verify they're running (processes, ping, API)
+5. Destroy the VMs and clean up
+
+**Options:**
+```bash
+# Create more VMs
+sudo NUM_VMS=10 ./scripts/test-firecracker.sh
+
+# Use different port
+sudo PORT=9091 ./scripts/test-firecracker.sh
+```
 
 ---
 
