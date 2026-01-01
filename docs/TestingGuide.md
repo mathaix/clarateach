@@ -50,10 +50,10 @@ Think of it like Russian nesting dolls:
 gcloud compute ssh clara2 --zone=us-central1-b --project=clarateach
 ```
 
-### 2. Go to the backend directory
+### 2. Go to the project directory
 
 ```bash
-cd ~/clarateach/backend
+cd ~/clarateach
 ```
 
 ### 3. Check if the agent is running
@@ -335,14 +335,16 @@ curl http://34.68.136.93:9090/proxy/my-workshop/1/files/hello.txt
 For testing the complete flow from backend API to working MicroVMs:
 
 ```bash
-# Start the backend first
+# Start the backend first (from the backend directory)
+cd ~/clarateach/backend
 GCP_PROJECT=clarateach \
 GCP_ZONE=us-central1-b \
 GCP_REGISTRY=us-central1-docker.pkg.dev/clarateach/clarateach \
 FC_SNAPSHOT_NAME=clara2-snapshot \
 go run ./cmd/server/
 
-# In another terminal, run the full E2E test
+# In another terminal, run the full E2E test (from the project root)
+cd ~/clarateach
 ./scripts/test-e2e-gcp.sh
 ```
 
