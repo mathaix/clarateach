@@ -138,7 +138,7 @@ func (f *FirecrackerProvider) Create(ctx context.Context, cfg InstanceConfig) (*
 
 	// Build kernel boot args with network config
 	// Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>
-	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off ip=%s::%s:255.255.255.0::eth0:off", vmIP, gatewayIP)
+	bootArgs := fmt.Sprintf("console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init ip=%s::%s:255.255.255.0::eth0:off", vmIP, gatewayIP)
 
 	fcCfg := firecracker.Config{
 		SocketPath:      socketPath,
