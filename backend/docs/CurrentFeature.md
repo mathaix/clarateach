@@ -148,11 +148,11 @@ WantedBy=multi-user.target
 ```
 
 **Tasks**:
-- [ ] SSH into clara2
-- [ ] Copy agent binary to `/usr/local/bin/agent`
-- [ ] Create systemd service file
-- [ ] Enable and test service
-- [ ] Update snapshot
+- [x] SSH into clara2 (we're already on clara2)
+- [x] Copy agent binary to `/usr/local/bin/agent`
+- [x] Create systemd service file
+- [x] Enable and test service
+- [ ] Update snapshot (requires stopping VM)
 
 ### Phase 4: End-to-End Test Script
 
@@ -211,7 +211,7 @@ The current init script runs `sleep infinity`. Need to restore the Node.js works
 | GCP provisioner (Docker) | ✅ Exists | Creates VMs with Docker containers |
 | GCP+Firecracker provisioner | ✅ Created | Phase 1 complete - creates spot VMs from snapshot |
 | Agent proxy | ✅ Created | Phase 2 complete - WebSocket + HTTP proxy |
-| Agent systemd service | ❌ Missing | Need to set up on clara2 |
+| Agent systemd service | ✅ Running | Phase 3 complete - service enabled on clara2 |
 | E2E test script | ❌ Missing | Need to create |
 | Workspace server in MicroVM | ⚠️ Broken | Exits immediately, using sleep infinity |
 
