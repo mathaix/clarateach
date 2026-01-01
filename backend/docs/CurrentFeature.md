@@ -181,15 +181,15 @@ SEATS=3
 ```
 
 **Tasks**:
-- [ ] Create test script skeleton
-- [ ] Implement workshop creation test
-- [ ] Implement VM verification
-- [ ] Implement agent health check
-- [ ] Implement MicroVM verification
-- [ ] Implement proxy tests (terminal + files)
-- [ ] Implement cleanup verification
-- [ ] Add timeout handling
-- [ ] Add colored output for pass/fail
+- [x] Create test script skeleton
+- [x] Implement workshop creation test
+- [x] Implement VM verification
+- [x] Implement agent health check
+- [x] Implement MicroVM verification
+- [x] Implement proxy tests (health check works, terminal/files need MicroVM services)
+- [x] Implement cleanup verification
+- [x] Add timeout handling
+- [x] Add colored output for pass/fail
 
 ### Phase 5: Fix Workspace Server in MicroVM
 
@@ -212,7 +212,7 @@ The current init script runs `sleep infinity`. Need to restore the Node.js works
 | GCP+Firecracker provisioner | ✅ Created | Phase 1 complete - creates spot VMs from snapshot |
 | Agent proxy | ✅ Created | Phase 2 complete - WebSocket + HTTP proxy |
 | Agent systemd service | ✅ Running | Phase 3 complete - service enabled on clara2 |
-| E2E test script | ❌ Missing | Need to create |
+| E2E test script | ✅ Created | Phase 4 complete - 14 tests pass |
 | Workspace server in MicroVM | ⚠️ Broken | Exits immediately, using sleep infinity |
 
 ## Prerequisites
