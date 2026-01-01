@@ -124,14 +124,16 @@ func (p *GCPFirecrackerProvider) createGCPVM(ctx context.Context, cfg VMConfig) 
 		})
 	}
 
-	// Spot instance scheduling
+	// Scheduling config (spot vs on-demand)
+	// cfg.Spot is set by the server based on configuration
 	scheduling := &computepb.Scheduling{
-		AutomaticRestart:  proto.Bool(false),
-		OnHostMaintenance: proto.String("TERMINATE"),
-		Preemptible:       proto.Bool(true),
-		ProvisioningModel: proto.String("SPOT"),
-		// STOP instead of DELETE when preempted
-		InstanceTerminationAction: proto.String("STOP"),
+		AutomaticRestart:  proto.Bool(!cfg.Spot),
+		OnHostMaintenance: proto.String("TERMINATE"), // Required for nested virtualization
+	}
+	if cfg.Spot {
+		scheduling.Preemptible = proto.Bool(true)
+		scheduling.ProvisioningModel = proto.String("SPOT")
+		scheduling.InstanceTerminationAction = proto.String("STOP")
 	}
 
 	// Build instance with nested virtualization enabled

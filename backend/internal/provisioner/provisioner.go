@@ -55,7 +55,7 @@ func DefaultConfig(workshopID string, seats int) VMConfig {
 		Seats:          seats,
 		MachineType:    "e2-standard-4",
 		DiskSizeGB:     50,
-		Spot:           false,
+		Spot:           true, // Default to spot for cost savings
 		EnableOpsAgent: false, // COS doesn't support Ops Agent installation
 	}
 }
