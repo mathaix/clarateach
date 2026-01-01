@@ -8,7 +8,7 @@ Type=simple
 User=root
 Environment=IMAGES_DIR=/var/lib/clarateach/images
 Environment=SOCKET_DIR=/tmp/clarateach
-ExecStartPre=/bin/bash -c 'AGENT_TOKEN=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/agent-token 2>/dev/null || echo ""); echo "AGENT_TOKEN=$AGENT_TOKEN" > /run/clarateach-agent.env'
+ExecStartPre=/bin/bash -c 'RESPONSE=$(curl -s -w "%%{http_code}" -o /tmp/agent-token.txt -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/agent-token 2>/dev/null); if [ "$RESPONSE" = "200" ]; then echo "AGENT_TOKEN=$(cat /tmp/agent-token.txt)" > /run/clarateach-agent.env; else echo "" > /run/clarateach-agent.env; fi; rm -f /tmp/agent-token.txt'
 EnvironmentFile=-/run/clarateach-agent.env
 ExecStart=/usr/local/bin/agent
 Restart=always
