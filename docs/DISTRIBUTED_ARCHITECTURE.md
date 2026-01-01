@@ -32,11 +32,40 @@ The current implementation assumes single-box architecture where the Backend API
 Worker VMs are provisioned via GCP with a startup script:
 ```bash
 #!/bin/bash
-# Startup script for Worker VM
+set -euo pipefail
+
+# Download binaries and images
 gsutil cp gs://my-bucket/clarateach-agent /usr/local/bin/
 gsutil cp gs://my-bucket/rootfs.ext4 /var/lib/clarateach/images/
 gsutil cp gs://my-bucket/vmlinux /var/lib/clarateach/images/
 chmod +x /usr/local/bin/clarateach-agent
+
+# Create systemd unit file
+cat > /etc/systemd/system/clarateach-agent.service << 'EOF'
+[Unit]
+Description=ClaraTeach Worker Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/clarateach-agent
+Restart=always
+RestartSec=5
+Environment=PORT=9090
+Environment=IMAGES_DIR=/var/lib/clarateach/images
+Environment=SOCKET_DIR=/tmp/clarateach
+
+# Security hardening
+NoNewPrivileges=false
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start service
+systemctl daemon-reload
+systemctl enable clarateach-agent
 systemctl start clarateach-agent
 ```
 
@@ -45,9 +74,10 @@ systemctl start clarateach-agent
 ## Security
 
 ### 1. Network Layer (VPC Firewall)
+
+**Option A: Control Plane on GCE (uses network tags)**
 ```hcl
-# Only allow traffic from control-plane to agents
-resource "google_compute_firewall" "agent-internal" {
+resource "google_compute_firewall" "agent-internal-gce" {
   name    = "allow-agent-internal"
   network = "default"
 
@@ -61,6 +91,50 @@ resource "google_compute_firewall" "agent-internal" {
 }
 ```
 
+**Option B: Control Plane on Cloud Run (uses VPC Connector)**
+
+Cloud Run doesn't have network tags. You must use a VPC Connector and allow its subnet:
+
+```hcl
+# VPC Connector for Cloud Run
+resource "google_vpc_access_connector" "connector" {
+  name          = "clarateach-connector"
+  region        = "us-central1"
+  ip_cidr_range = "10.8.0.0/28"  # /28 required for connectors
+  network       = "default"
+}
+
+# Firewall: Allow VPC Connector subnet to reach agents
+resource "google_compute_firewall" "agent-internal-cloudrun" {
+  name    = "allow-agent-from-connector"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["9090"]
+  }
+
+  # VPC Connector IP range
+  source_ranges = ["10.8.0.0/28"]
+  target_tags   = ["worker-agent"]
+}
+```
+
+Then configure Cloud Run to use the connector:
+```hcl
+resource "google_cloud_run_service" "api" {
+  # ...
+  template {
+    metadata {
+      annotations = {
+        "run.googleapis.com/vpc-access-connector" = google_vpc_access_connector.connector.id
+        "run.googleapis.com/vpc-access-egress"    = "all-traffic"
+      }
+    }
+  }
+}
+```
+
 ### 2. Authentication (Agent Token)
 - Control Plane generates a random token when creating/registering a Worker VM
 - Token is injected into VM via GCP instance metadata: `agent-token`
@@ -69,8 +143,14 @@ resource "google_compute_firewall" "agent-internal" {
 
 ```go
 // Agent reads token from GCP metadata on startup
+// IMPORTANT: Must include Metadata-Flavor header or request will 403
 func getAgentToken() (string, error) {
-    resp, err := http.Get("http://metadata.google.internal/computeMetadata/v1/instance/attributes/agent-token")
+    req, _ := http.NewRequest("GET",
+        "http://metadata.google.internal/computeMetadata/v1/instance/attributes/agent-token", nil)
+    req.Header.Set("Metadata-Flavor", "Google")  // Required header
+
+    client := &http.Client{Timeout: 2 * time.Second}
+    resp, err := client.Do(req)
     // ...
 }
 
@@ -211,8 +291,16 @@ func (p *WorkerPool) GetHealthyWorkers() []*Worker
 ### Step 5: Create Placement Logic
 Create `internal/workeragent/placement.go`:
 - Round-robin with capacity awareness
-- Track which worker hosts which VM (in-memory map)
 - Retry on different worker if one fails
+
+**VM-to-Worker Mapping Persistence:**
+
+Option A (Database - Recommended): Store `worker_id` in `workshop_vms` table
+```sql
+ALTER TABLE workshop_vms ADD COLUMN worker_id TEXT;
+```
+
+Option B (In-memory with recovery): On Control Plane restart, query all workers' `/vms` endpoints to rebuild the mapping.
 
 ### Step 6: Modify Firecracker Provisioner
 Update `internal/provisioner/firecracker.go`:
@@ -221,23 +309,53 @@ Update `internal/provisioner/firecracker.go`:
 type FirecrackerProvisioner struct {
     workerPool  *workeragent.WorkerPool
     placer      *workeragent.Placer
-    vmWorkerMap map[string]string  // workshopID-seatID -> workerID
+    store       store.Store  // For persisting VM-worker mapping
 }
 
 func (f *FirecrackerProvisioner) CreateVM(ctx, cfg) {
     worker := f.placer.SelectWorker()
     resp, err := worker.Client.CreateVM(ctx, request)
-    f.vmWorkerMap[key] = worker.ID
+
+    // Persist worker assignment in database
+    f.store.UpdateVMWorker(ctx, cfg.WorkshopID, cfg.SeatID, worker.ID)
+
     return resp
+}
+
+func (f *FirecrackerProvisioner) DeleteVM(ctx, workshopID string) error {
+    // Look up worker from database
+    workerID, err := f.store.GetVMWorker(ctx, workshopID, seatID)
+    if err != nil {
+        return err
+    }
+    worker := f.workerPool.GetWorker(workerID)
+    return worker.Client.DestroyVM(ctx, workshopID, seatID)
+}
+
+// ReconcileVMs rebuilds in-memory state from workers on startup
+func (f *FirecrackerProvisioner) ReconcileVMs(ctx context.Context) error {
+    for _, worker := range f.workerPool.GetHealthyWorkers() {
+        vms, err := worker.Client.ListVMs(ctx, "")
+        if err != nil {
+            continue
+        }
+        for _, vm := range vms {
+            f.store.UpdateVMWorker(ctx, vm.WorkshopID, vm.SeatID, worker.ID)
+        }
+    }
+    return nil
 }
 ```
 
 ### Step 7: Update Server Initialization
 Modify `cmd/server/main.go`:
 ```go
-if workerAddrs := os.Getenv("WORKER_AGENTS"); workerAddrs != "" {
-    // Parse "addr:token,addr:token" format
-    configs := parseWorkerConfigs(workerAddrs)
+if workersJSON := os.Getenv("WORKER_AGENTS"); workersJSON != "" {
+    // Parse JSON array of worker configs
+    var configs []workeragent.WorkerConfig
+    if err := json.Unmarshal([]byte(workersJSON), &configs); err != nil {
+        log.Fatalf("Invalid WORKER_AGENTS JSON: %v", err)
+    }
     pool := workeragent.NewWorkerPool(configs)
     pool.StartHealthChecks(30 * time.Second)
     fcProv = provisioner.NewFirecrackerProvisioner(pool)
@@ -299,8 +417,14 @@ func Build(ctx context.Context, cfg BuildConfig) error {
 
 ### Control Plane
 ```bash
-# Format: address:token,address:token
-WORKER_AGENTS=10.0.0.10:9090:abc123token,10.0.0.11:9090:def456token
+# JSON array format (avoids delimiter conflicts with IPv6 or colons in tokens)
+WORKER_AGENTS='[
+  {"address": "10.0.0.10:9090", "token": "abc123token"},
+  {"address": "10.0.0.11:9090", "token": "def456token"}
+]'
+
+# Or single line:
+WORKER_AGENTS='[{"address":"10.0.0.10:9090","token":"abc123token"},{"address":"10.0.0.11:9090","token":"def456token"}]'
 ```
 
 ### Worker Agent
