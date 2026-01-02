@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS workshops (
 	code TEXT NOT NULL UNIQUE,
 	seats INTEGER NOT NULL,
 	api_key TEXT NOT NULL,
+	runtime_type TEXT NOT NULL DEFAULT 'docker',
 	status TEXT NOT NULL,
 	owner_id TEXT,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

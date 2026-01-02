@@ -60,7 +60,7 @@ echo ""
 echo "=== Test 2: Create Workshop (Firecracker) ==="
 RESULT=$(curl -s -X POST "$BACKEND_URL/api/workshops" \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"$WORKSHOP_NAME\", \"seats\": $SEATS, \"runtime\": \"firecracker\"}")
+    -d "{\"name\": \"$WORKSHOP_NAME\", \"seats\": $SEATS, \"runtime_type\": \"firecracker\"}")
 
 if echo "$RESULT" | grep -q '"id"'; then
     WORKSHOP_ID=$(echo "$RESULT" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)

@@ -18,9 +18,13 @@ export GCP_REGISTRY="${GCP_REGISTRY:-us-central1-docker.pkg.dev/clarateach/clara
 export AUTH_DISABLED="${AUTH_DISABLED:-true}"
 export PORT="${PORT:-8080}"
 
+# Firecracker provisioner config
+export FC_SNAPSHOT_NAME="${FC_SNAPSHOT_NAME:-clara2-snapshot-2}"
+
 echo "Starting backend on port $PORT..."
 echo "  GCP_PROJECT=$GCP_PROJECT"
 echo "  GCP_ZONE=$GCP_ZONE"
+echo "  FC_SNAPSHOT_NAME=$FC_SNAPSHOT_NAME"
 echo "  AUTH_DISABLED=$AUTH_DISABLED"
 echo ""
 
