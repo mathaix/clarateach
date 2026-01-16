@@ -54,8 +54,8 @@ googleapi: Error 403: Request had insufficient authentication scopes.
 From a machine with proper GCP access (or use Cloud Console):
 
 ```bash
-# Get VM name
-VM_NAME=<your-vm-name>
+# Get VM name from inside the VM (queries GCP metadata server)
+VM_NAME=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/name)
 
 # Stop the VM
 gcloud compute instances stop $VM_NAME --zone=us-central1-b
