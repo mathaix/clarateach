@@ -118,15 +118,21 @@ function isBinaryFile(filename: string): boolean {
   return binaryExtensions.includes(ext);
 }
 
-export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: string) {
+export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: string, microvmMode = false) {
   // Apply auth middleware to all file routes
+  // In MicroVM mode, skip seat enforcement (single-tenant)
   const seatGuard = async (request: FastifyRequest, reply: FastifyReply) => {
-    enforceSeatAccess(request, reply);
+    if (!microvmMode) {
+      enforceSeatAccess(request, reply);
+    }
   };
   const authHook = { preHandler: [authMiddleware, seatGuard] };
 
+  // Route prefix: /vm/:seat in Docker mode, /files in MicroVM mode
+  const routePrefix = microvmMode ? '/files' : '/vm/:seat/files';
+
   // List directory contents
-  fastify.get('/vm/:seat/files', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get(routePrefix, authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const { path: dirPath = workspaceDir } = request.query as { path?: string };
 
     const safePath = await resolveSafePath(workspaceDir, dirPath);
@@ -170,7 +176,7 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
   });
 
   // Read file contents
-  fastify.get('/vm/:seat/files/*', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.get(`${routePrefix}/*`, authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const filePath = (request.params as { '*': string })['*'];
 
     if (!filePath) {
@@ -207,7 +213,7 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
   });
 
   // Write file contents
-  fastify.put('/vm/:seat/files/*', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.put(`${routePrefix}/*`, authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const filePath = (request.params as { '*': string })['*'];
 
     if (!filePath) {
@@ -249,7 +255,7 @@ export function registerFileRoutes(fastify: FastifyInstance, workspaceDir: strin
   });
 
   // Delete file or directory
-  fastify.delete('/vm/:seat/files/*', authHook, async (request: FastifyRequest, reply: FastifyReply) => {
+  fastify.delete(`${routePrefix}/*`, authHook, async (request: FastifyRequest, reply: FastifyReply) => {
     const filePath = (request.params as { '*': string })['*'];
 
     if (!filePath) {

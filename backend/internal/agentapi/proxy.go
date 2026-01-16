@@ -61,7 +61,8 @@ func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vmIP := getMicroVMIP(seatID)
-	targetURL := fmt.Sprintf("ws://%s:%d", vmIP, terminalPort)
+	// MicroVM server expects /terminal route
+	targetURL := fmt.Sprintf("ws://%s:%d/terminal", vmIP, terminalPort)
 
 	s.logger.Infof("Proxying terminal WebSocket: %s seat %d -> %s", workshopID, seatID, targetURL)
 
@@ -181,12 +182,12 @@ func (s *Server) handleFilesProxy(w http.ResponseWriter, r *http.Request) {
 		req.URL.Host = targetURL.Host
 		req.Host = targetURL.Host
 
-		// Strip the proxy prefix from the path
-		// /proxy/{workshopID}/{seatID}/files/path -> /path
-		prefix := fmt.Sprintf("/proxy/%s/%s/files", workshopID, seatIDStr)
+		// Rewrite path: /proxy/{workshopID}/{seatID}/files/path -> /files/path
+		// MicroVM server expects /files prefix (MICROVM_MODE routes)
+		prefix := fmt.Sprintf("/proxy/%s/%s", workshopID, seatIDStr)
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
 		if req.URL.Path == "" {
-			req.URL.Path = "/"
+			req.URL.Path = "/files"
 		}
 
 		// Forward original request info

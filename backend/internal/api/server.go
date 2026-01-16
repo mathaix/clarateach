@@ -840,15 +840,23 @@ func (s *Server) getSessionByCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build endpoint URL
-	endpoint := fmt.Sprintf("http://%s:8080", vm.ExternalIP)
+	// Build endpoint URL based on runtime type
+	var endpoint string
+	if workshop.RuntimeType == "firecracker" {
+		// Firecracker agent runs on port 9090
+		endpoint = fmt.Sprintf("http://%s:9090", vm.ExternalIP)
+	} else {
+		// Docker workspace server runs on port 8080
+		endpoint = fmt.Sprintf("http://%s:8080", vm.ExternalIP)
+	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":      "ready",
-		"endpoint":    endpoint,
-		"seat":        *registration.SeatID,
-		"name":        registration.Name,
-		"workshop_id": workshop.ID,
+		"status":       "ready",
+		"endpoint":     endpoint,
+		"seat":         *registration.SeatID,
+		"name":         registration.Name,
+		"workshop_id":  workshop.ID,
+		"runtime_type": workshop.RuntimeType,
 	})
 }
 

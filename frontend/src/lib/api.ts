@@ -189,6 +189,7 @@ export interface SessionResponse {
   seat?: number;
   name?: string;
   workshop_id?: string;
+  runtime_type?: 'docker' | 'firecracker';
 }
 
 // Admin types

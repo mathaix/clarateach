@@ -1,4 +1,4 @@
-export type WorkshopStatus = 'created' | 'provisioning' | 'running' | 'stopping' | 'stopped' | 'error';
+export type WorkshopStatus = 'created' | 'provisioning' | 'running' | 'stopping' | 'stopped' | 'deleting' | 'deleted' | 'error';
 
 export interface Workshop {
   id: string;

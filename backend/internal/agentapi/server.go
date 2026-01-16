@@ -70,7 +70,7 @@ func (s *Server) routes() {
 	// Health check - no auth required
 	s.router.Get("/health", s.handleHealth)
 
-	// All other routes require authentication
+	// Control plane routes require agent authentication
 	s.router.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
@@ -84,13 +84,15 @@ func (s *Server) routes() {
 			r.Get("/{workshopID}/{seatID}", s.handleGetVM)
 			r.Delete("/{workshopID}/{seatID}", s.handleDestroyVM)
 		})
+	})
 
-		// Proxy routes to MicroVM services
-		r.Route("/proxy", func(r chi.Router) {
-			r.Get("/{workshopID}/{seatID}/terminal", s.handleTerminalProxy)
-			r.HandleFunc("/{workshopID}/{seatID}/files/*", s.handleFilesProxy)
-			r.Get("/{workshopID}/{seatID}/health", s.handleHealthProxy)
-		})
+	// Proxy routes are public - auth handled by MicroVM's workspace server
+	s.router.Route("/proxy", func(r chi.Router) {
+		r.Get("/{workshopID}/{seatID}/terminal", s.handleTerminalProxy)
+		// Files proxy: both /files (directory listing) and /files/* (file operations)
+		r.Get("/{workshopID}/{seatID}/files", s.handleFilesProxy)
+		r.HandleFunc("/{workshopID}/{seatID}/files/*", s.handleFilesProxy)
+		r.Get("/{workshopID}/{seatID}/health", s.handleHealthProxy)
 	})
 }
 

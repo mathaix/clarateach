@@ -41,6 +41,45 @@ Think of it like Russian nesting dolls:
 - Access to the `clarateach` GCP project
 - SSH access to clara2 VM
 
+### GCP VM Scopes (for E2E tests)
+
+If running the full GCP E2E test (`test-e2e-gcp.sh`) from a GCE VM, the VM must have sufficient OAuth scopes to create/manage other VMs. If you see this error:
+
+```
+googleapi: Error 403: Request had insufficient authentication scopes.
+```
+
+**Fix: Update VM scopes**
+
+From a machine with proper GCP access (or use Cloud Console):
+
+```bash
+# Get VM name
+VM_NAME=<your-vm-name>
+
+# Stop the VM
+gcloud compute instances stop $VM_NAME --zone=us-central1-b
+
+# Set scopes (includes compute read-write)
+gcloud compute instances set-service-account $VM_NAME \
+  --zone=us-central1-b \
+  --scopes=compute-rw,storage-ro,logging-write,monitoring
+
+# Start the VM
+gcloud compute instances start $VM_NAME --zone=us-central1-b
+```
+
+**Alternative: Via Cloud Console**
+1. Go to Compute Engine → VM instances
+2. Stop the VM
+3. Edit → Service account → Set access scopes to "Allow full access to all Cloud APIs"
+4. Start the VM
+
+**Alternative: Use a service account key**
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
+```
+
 ## Step-by-Step Testing
 
 ### 1. SSH into clara2
@@ -355,3 +394,264 @@ The script will:
 4. Check MicroVM services
 5. Display access URLs for each seat
 6. Wait for you to press Enter before cleanup
+
+---
+
+## Testing Frontend with Firecracker MicroVMs
+
+This section explains how to test the frontend (Editor + Terminal) connecting to Firecracker MicroVMs instead of Docker containers.
+
+### Overview
+
+The frontend detects `runtime_type` from the session and routes requests accordingly:
+
+| Runtime Type | API Path | WebSocket Path |
+|--------------|----------|----------------|
+| Docker | `/vm/{seat}/files` | `/vm/{seat}/terminal` |
+| Firecracker | `/proxy/{workshopID}/{seatID}/files` | `/proxy/{workshopID}/{seatID}/terminal` |
+
+### Prerequisites
+
+1. **clara2 VM running** with the agent service
+2. **MicroVM rootfs** built with the workspace server (MICROVM_MODE=true)
+3. **Backend** running locally or accessible
+4. **Frontend** running locally
+
+### Step 1: Verify Agent is Running on clara2
+
+```bash
+# SSH into clara2
+gcloud compute ssh clara2 --zone=us-central1-b --project=clarateach
+
+# Check agent status
+sudo systemctl status clarateach-agent
+curl localhost:9090/health
+```
+
+### Step 2: Create MicroVMs for Testing
+
+```bash
+# On clara2, create test VMs
+curl -X POST localhost:9090/vms \
+  -H "Content-Type: application/json" \
+  -d '{"workshop_id": "frontend-test", "seat_id": 1}'
+
+curl -X POST localhost:9090/vms \
+  -H "Content-Type: application/json" \
+  -d '{"workshop_id": "frontend-test", "seat_id": 2}'
+
+# Verify they're running
+curl localhost:9090/vms
+
+# Check if workspace services are responding
+curl localhost:9090/proxy/frontend-test/1/health
+```
+
+Expected health response when services are running:
+```json
+{"workshop_id":"frontend-test","seat_id":1,"vm_ip":"192.168.100.11","status":"healthy","terminal":true,"files":true}
+```
+
+### Step 3: Start Backend with Firecracker Support
+
+```bash
+cd ~/clarateach/backend
+
+# Start backend (it will auto-detect Firecracker provisioner on Linux with KVM)
+AUTH_DISABLED=true \
+GCP_PROJECT=clarateach \
+GCP_ZONE=us-central1-b \
+go run ./cmd/server/
+```
+
+### Step 4: Create a Firecracker Workshop via API
+
+```bash
+# Create a workshop with runtime_type=firecracker
+curl -X POST http://localhost:8080/api/workshops \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Frontend Test Workshop",
+    "seats": 3,
+    "runtime_type": "firecracker"
+  }'
+```
+
+Note the workshop `code` in the response (e.g., `ABC12-XYZ9`).
+
+### Step 5: Register and Get Session
+
+```bash
+# Register for the workshop
+curl -X POST http://localhost:8080/api/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workshop_code": "ABC12-XYZ9",
+    "email": "test@example.com",
+    "name": "Test User"
+  }'
+
+# Note the access_code in response (e.g., "XYZ-1234")
+
+# Get session details
+curl http://localhost:8080/api/session/XYZ-1234
+```
+
+Expected response:
+```json
+{
+  "status": "ready",
+  "endpoint": "http://<vm-ip>:9090",
+  "seat": 1,
+  "name": "Test User",
+  "workshop_id": "ws-abc123",
+  "runtime_type": "firecracker"
+}
+```
+
+Key fields to verify:
+- `runtime_type` is `"firecracker"`
+- `endpoint` points to port `9090` (agent port, not 8080)
+
+### Step 6: Start Frontend and Test
+
+```bash
+cd ~/clarateach/frontend
+npm run dev
+```
+
+Open browser to `http://localhost:5173/session/XYZ-1234`
+
+**What to verify:**
+
+1. **File Explorer loads** - Should show files from MicroVM's `/workspace` directory
+2. **Terminal connects** - Should get a bash shell inside the MicroVM
+3. **File editing works** - Create/edit/save files
+4. **Console shows correct paths** - Open browser DevTools Network tab:
+   - File requests go to `/proxy/{workshopID}/{seatID}/files/...`
+   - WebSocket connects to `/proxy/{workshopID}/{seatID}/terminal`
+
+### Step 7: Manual API Testing
+
+Test the proxy endpoints directly to verify routing:
+
+```bash
+# Get clara2's external IP
+AGENT_IP=$(gcloud compute instances describe clara2 --zone=us-central1-b --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+
+# List files (should return workspace contents)
+curl "http://$AGENT_IP:9090/proxy/frontend-test/1/files"
+
+# Read a file
+curl "http://$AGENT_IP:9090/proxy/frontend-test/1/files/README.md"
+
+# Create a file
+curl -X PUT "http://$AGENT_IP:9090/proxy/frontend-test/1/files/test.txt" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Hello from test!"}'
+
+# Test WebSocket (requires websocat)
+websocat "ws://$AGENT_IP:9090/proxy/frontend-test/1/terminal"
+```
+
+### Step 8: Cleanup
+
+```bash
+# On clara2, delete test VMs
+curl -X DELETE localhost:9090/vms/frontend-test/1
+curl -X DELETE localhost:9090/vms/frontend-test/2
+
+# Verify they're gone
+curl localhost:9090/vms
+```
+
+### Troubleshooting Frontend Integration
+
+#### Files not loading?
+
+1. Check browser DevTools → Network tab for failed requests
+2. Verify the request URL contains `/proxy/{workshopID}/{seatID}/files`
+3. Check CORS headers - agent should allow cross-origin requests
+
+```bash
+# Test CORS preflight
+curl -X OPTIONS "http://$AGENT_IP:9090/proxy/frontend-test/1/files" \
+  -H "Origin: http://localhost:5173" \
+  -H "Access-Control-Request-Method: GET" -v
+```
+
+#### Terminal not connecting?
+
+1. Check browser DevTools → Network tab → WS for WebSocket connection
+2. Verify WebSocket URL is `ws://<ip>:9090/proxy/{workshopID}/{seatID}/terminal`
+3. Check agent logs for connection attempts:
+   ```bash
+   sudo journalctl -u clarateach-agent -f | grep -i terminal
+   ```
+
+#### "VM not found" errors?
+
+1. Verify MicroVMs are running:
+   ```bash
+   curl localhost:9090/vms
+   ```
+2. Check the workshop_id and seat_id match what was created
+
+#### Auth errors from workspace server?
+
+The MicroVM's workspace server should have `AUTH_DISABLED=true` for testing:
+```bash
+# Check environment in MicroVM (from clara2)
+# The rootfs should be built with AUTH_DISABLED=true
+```
+
+### MicroVM Rootfs Requirements
+
+For the frontend to work with MicroVMs, the rootfs must include:
+
+1. **Workspace server** with `MICROVM_MODE=true` - Routes are `/files` and `/terminal` (no `/vm/:seat` prefix)
+2. **AUTH_DISABLED=true** - Or proper JWT validation configured
+3. **Ports exposed**:
+   - 3001: Terminal server (WebSocket)
+   - 3002: File server (HTTP)
+
+Build the rootfs with these settings:
+```bash
+cd ~/clarateach
+sudo ./scripts/rootfs-builder/build-rootfs.sh
+```
+
+The build script should set in the rootfs's systemd service:
+```ini
+Environment=MICROVM_MODE=true
+Environment=AUTH_DISABLED=true
+Environment=WORKSPACE_DIR=/workspace
+```
+
+### Expected Request Flow
+
+```
+Browser                 Backend               Agent (clara2)           MicroVM
+   │                       │                       │                      │
+   │ GET /api/session/code │                       │                      │
+   │──────────────────────>│                       │                      │
+   │                       │                       │                      │
+   │ {runtime_type:        │                       │                      │
+   │  "firecracker",       │                       │                      │
+   │  endpoint: ":9090"}   │                       │                      │
+   │<──────────────────────│                       │                      │
+   │                       │                       │                      │
+   │ GET /proxy/ws/1/files ──────────────────────>│                      │
+   │                       │                       │ GET /files           │
+   │                       │                       │─────────────────────>│
+   │                       │                       │                      │
+   │                       │                       │ {files: [...]}       │
+   │                       │                       │<─────────────────────│
+   │ {files: [...]}        │                       │                      │
+   │<─────────────────────────────────────────────│                      │
+   │                       │                       │                      │
+   │ WS /proxy/ws/1/terminal ────────────────────>│                      │
+   │                       │                       │ WS /terminal         │
+   │                       │                       │─────────────────────>│
+   │ <──────────── bidirectional ────────────────────────────────────────>│
+```
