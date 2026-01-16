@@ -1,244 +1,307 @@
-# Current Feature: End-to-End Firecracker Flow Test
+# Current Feature: Portal → Workshop → Firecracker MicroVMs
 
 > **Workflow**: See [CurrentFeatureWorkflow.md](CurrentFeatureWorkflow.md) for how this document is managed through the release cycle.
 
 ## Goal
 
-Validate the complete Firecracker workshop flow end-to-end:
-1. Backend API receives workshop creation request
-2. GCP spot VM is provisioned (using clara2 snapshot)
-3. Agent starts and becomes healthy
-4. MicroVMs are created for each seat
-5. User can access workspace interfaces
-6. Cleanup works correctly
+Complete the end-to-end flow from portal to user workspace:
 
-## Success Criteria
+1. Admin creates workshop in portal (with Firecracker runtime)
+2. Backend provisions GCP VM from snapshot
+3. Agent creates MicroVMs for each seat
+4. User joins workshop and accesses their workspace
 
-- [x] Workshop creation triggers VM provisioning
-- [x] VM created as spot instance with nested virtualization
-- [x] Agent health check passes within 2 minutes of boot
-- [x] MicroVMs created and pingable
-- [x] User can access terminal (WebSocket) - proxy implemented
-- [x] User can access file API (HTTP) - proxy implemented
-- [ ] Workshop deletion cleans up VM and MicroVMs (code exists, needs full test)
+## Current State Summary
 
-## Architecture Under Test
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Backend API (`POST /api/workshops`) | ✅ Complete | Accepts `runtime_type`, routes to correct provisioner |
+| Provisioner routing | ✅ Complete | `getProvisioner()` selects based on runtime_type |
+| `GCPFirecrackerProvider` | ✅ Complete | Creates VM, waits for agent, creates MicroVMs |
+| Agent API | ✅ Complete | `POST /vms` creates MicroVMs, proxy routes traffic |
+| Session join flow | ✅ Complete | Routes to port 9090 for Firecracker runtime |
+| **Frontend workshop creation** | ❌ Missing | No UI to select runtime_type (defaults to docker) |
+| **Frontend workspace connection** | ⚠️ Needs testing | May need updates for agent endpoint format |
+
+## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                         Test Script / Manual Test                         │
+│                         Portal (Frontend)                                 │
+│                                                                          │
+│  Dashboard.tsx: Create Workshop                                          │
+│  - name, seats, api_key                                                  │
+│  - runtime_type: docker | firecracker  ← MISSING FROM UI                 │
 └────────────────────────────────┬─────────────────────────────────────────┘
                                  │
                                  ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                    POST /api/workshops                                    │
-│                    { runtime: "firecracker", seats: 3 }                  │
+│                    { name, seats, api_key, runtime_type }                │
 └────────────────────────────────┬─────────────────────────────────────────┘
                                  │
                                  ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                         Control Plane (server:8080)                       │
+│                    Backend Server (:8080)                                │
 │                                                                          │
-│  GCPFirecrackerProvisioner:                                              │
-│  1. Create GCP VM from clara2-snapshot (spot, nested virt)              │
-│  2. Wait for external IP                                                 │
-│  3. Poll agent health endpoint until ready                               │
-│  4. Call POST /vms for each seat                                         │
-│  5. Return workshop with endpoints                                       │
+│  getProvisioner(runtime_type):                                           │
+│  ├─ "docker"      → GCPProvider (Docker containers on VM)               │
+│  └─ "firecracker" → GCPFirecrackerProvider (MicroVMs on VM)             │
 └────────────────────────────────┬─────────────────────────────────────────┘
                                  │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│               GCP Spot VM (clara2-snapshot)                              │
-│               n2-standard-8, nested virtualization                       │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐ │
-│  │  Agent (:9090)                                                      │ │
-│  │  - Starts via systemd on boot                                       │ │
-│  │  - Creates MicroVMs via POST /vms                                   │ │
-│  │  - Proxies user traffic to MicroVMs                                 │ │
-│  └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐                │
-│  │ MicroVM Seat1 │  │ MicroVM Seat2 │  │ MicroVM Seat3 │                │
-│  │ 192.168.100.11│  │ 192.168.100.12│  │ 192.168.100.13│                │
-│  │ :3001 terminal│  │ :3001 terminal│  │ :3001 terminal│                │
-│  │ :3002 files   │  │ :3002 files   │  │ :3002 files   │                │
-│  └───────────────┘  └───────────────┘  └───────────────┘                │
-│                                                                          │
-│                    clarateach0 bridge (192.168.100.1/24)                │
-└──────────────────────────────────────────────────────────────────────────┘
+            ┌────────────────────┴────────────────────┐
+            │                                         │
+            ▼                                         ▼
+┌─────────────────────────┐             ┌─────────────────────────┐
+│ Docker Runtime          │             │ Firecracker Runtime     │
+│ (GCPProvider)           │             │ (GCPFirecrackerProvider)│
+│                         │             │                         │
+│ 1. Create VM            │             │ 1. Create VM from       │
+│ 2. Run startup script   │             │    clara2-snapshot      │
+│ 3. Launch containers    │             │ 2. Wait for agent health│
+│ 4. Start Caddy proxy    │             │ 3. POST /vms for seats  │
+│                         │             │                         │
+│ Access: :8080           │             │ Access: :9090           │
+└─────────────────────────┘             └───────────┬─────────────┘
+                                                    │
+                                                    ▼
+                                        ┌─────────────────────────┐
+                                        │ GCP VM (clara2-snapshot)│
+                                        │ n2-standard-8           │
+                                        │ nested virtualization   │
+                                        │                         │
+                                        │ Agent (:9090)           │
+                                        │ ├─ /health              │
+                                        │ ├─ POST /vms            │
+                                        │ └─ /proxy/{ws}/{seat}/  │
+                                        │                         │
+                                        │ MicroVMs:               │
+                                        │ ├─ Seat 1: 192.168.100.11│
+                                        │ ├─ Seat 2: 192.168.100.12│
+                                        │ └─ Seat N: 192.168.100.N │
+                                        └─────────────────────────┘
 ```
 
-## Current State
+## Next Phase: Portal Integration
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Agent | ✅ Working | Creates MicroVMs, manages lifecycle |
-| Firecracker orchestrator | ✅ Working | Network bridge, TAP devices, IP allocation |
-| GCP+Firecracker provisioner | ✅ Created | Creates spot VMs from snapshot |
-| Agent proxy | ✅ Working | WebSocket (terminal) + HTTP (files) proxy |
-| Agent systemd service | ✅ Running | Auto-starts on clara2 boot |
-| E2E test scripts | ✅ Created | Local + GCP test scripts |
-| Workspace server in MicroVM | ✅ Working | Terminal (3001) + Files (3002) healthy |
+### Tasks
 
-## Implementation Summary
+1. **Frontend: Add runtime selector to workshop creation**
+   - File: `frontend/src/pages/Dashboard.tsx`
+   - Add dropdown: Docker (default) | Firecracker
+   - Pass `runtime_type` in API call
 
-### Phase 1: GCPFirecrackerProvisioner ✅
+2. **Frontend: Verify workspace connection**
+   - File: `frontend/src/pages/Workspace.tsx`
+   - Ensure Terminal connects to: `ws://{endpoint}/proxy/{ws}/{seat}/terminal`
+   - Ensure Files API connects to: `http://{endpoint}/proxy/{ws}/{seat}/files/`
 
-**File**: `internal/provisioner/gcp_firecracker.go`
+3. **End-to-end test via portal**
+   - Create workshop with Firecracker runtime
+   - Register a user
+   - Join and access workspace
 
-- [x] Create provisioner struct with GCP client
-- [x] Implement `CreateVM` - create VM from snapshot
-- [x] Implement `waitForAgentHealth` - poll agent /health
-- [x] Implement `createMicroVMs` - call agent API for each seat
-- [x] Implement `DeleteVM` - destroy MicroVMs then delete GCP VM
+---
 
-### Phase 2: Agent Proxy ✅
+## Developing from a Laptop
 
-**File**: `internal/agentapi/proxy.go`
+You can run the backend locally and provision real GCP VMs.
 
-| Endpoint | Proxies To | Protocol |
-|----------|------------|----------|
-| `/proxy/{workshopID}/{seatID}/terminal` | `192.168.100.{10+seatID}:3001` | WebSocket |
-| `/proxy/{workshopID}/{seatID}/files/*` | `192.168.100.{10+seatID}:3002` | HTTP |
-| `/proxy/{workshopID}/{seatID}/health` | Both ports | HTTP |
-
-- [x] WebSocket proxy for terminal
-- [x] HTTP reverse proxy for files
-- [x] Health check endpoint
-
-### Phase 3: Agent Systemd Service ✅
-
-**File**: `scripts/clarateach-agent.service`
-
-- [x] Service file created and installed on clara2
-- [x] Auto-starts on boot
-- [x] Fetches agent token from GCP metadata (if available)
-- [ ] Update clara2 snapshot (requires stopping VM)
-
-### Phase 4: E2E Test Scripts ✅
-
-**Files**:
-- `scripts/test-e2e-local.sh` - Tests agent + MicroVMs locally
-- `scripts/test-e2e-gcp.sh` - Tests full backend → GCP → MicroVMs flow
-
-- [x] Agent health check
-- [x] MicroVM creation and listing
-- [x] Network connectivity (ping)
-- [x] Proxy health verification
-- [x] Cleanup
-
-### Phase 5: Workspace Server in MicroVM ✅
-
-**Root cause**: Missing `ip` command prevented network configuration in init script.
-
-**Fixes applied**:
-- [x] Added `init=/sbin/init` to kernel boot args
-- [x] Copied `ip` binary + libraries to rootfs
-- [x] Simplified init script with better error handling
-- [x] Terminal server (port 3001) working
-- [x] File server (port 3002) working
-
-## Test Commands
-
-### Quick Test (on clara2)
+### 1. Authenticate with GCP
 
 ```bash
-# Run local E2E test - creates 3 MicroVMs, verifies services, cleans up
-./scripts/test-e2e-local.sh
+# One-time setup - opens browser for OAuth
+gcloud auth application-default login
+
+# Verify it worked
+gcloud compute instances list --project=clarateach
 ```
 
-### Full GCP Test
+This creates credentials at `~/.config/gcloud/application_default_credentials.json` which the Go SDK automatically uses.
+
+### 2. Required IAM Permissions
+
+Your Google account needs these roles on the `clarateach` project:
+
+| Role | Purpose |
+|------|---------|
+| `roles/compute.instanceAdmin.v1` | Create/delete VMs |
+| `roles/compute.networkUser` | Use VPC networks |
+| `roles/iam.serviceAccountUser` | Attach service accounts to VMs |
+
+Check your permissions:
+```bash
+gcloud projects get-iam-policy clarateach \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:$(gcloud config get-value account)"
+```
+
+Grant if missing (requires admin):
+```bash
+gcloud projects add-iam-policy-binding clarateach \
+  --member="user:your-email@gmail.com" \
+  --role="roles/compute.instanceAdmin.v1"
+```
+
+### 3. Run the Backend
 
 ```bash
-# Terminal 1: Start backend
+cd backend
+
+# With Firecracker support
 GCP_PROJECT=clarateach \
 GCP_ZONE=us-central1-b \
 GCP_REGISTRY=us-central1-docker.pkg.dev/clarateach/clarateach \
 FC_SNAPSHOT_NAME=clara2-snapshot \
 go run ./cmd/server/
-
-# Terminal 2: Run full E2E test
-./scripts/test-e2e-gcp.sh
 ```
 
-### Manual Testing
+### 4. Run the Frontend
 
 ```bash
-# Check agent health
-curl localhost:9090/health
+cd frontend
+npm install
+npm run dev
+```
 
-# Create a MicroVM
-curl -X POST localhost:9090/vms \
+Access at `http://localhost:5173`
+
+### 5. Test Firecracker Flow via API
+
+```bash
+# Create workshop with Firecracker runtime
+curl -X POST http://localhost:8080/api/workshops \
   -H "Content-Type: application/json" \
-  -d '{"workshop_id": "test", "seat_id": 1}'
+  -d '{
+    "name": "Test Workshop",
+    "seats": 2,
+    "runtime_type": "firecracker"
+  }'
 
-# Check proxy health (should show terminal: true, files: true)
-curl localhost:9090/proxy/test/1/health
+# Check workshop status (wait for "running")
+curl http://localhost:8080/api/workshops/{id}
 
-# Access files API
-curl localhost:9090/proxy/test/1/files/
-
-# Cleanup
-curl -X DELETE localhost:9090/vms/test/1
+# Get VM info
+curl http://localhost:8080/api/workshops/{id}/vm
 ```
 
-## Accessing User Interfaces
+---
 
-### Terminal (WebSocket)
+## Environment Variables Reference
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GCP_PROJECT` | Yes | - | GCP project ID |
+| `GCP_ZONE` | No | `us-central1-a` | GCE zone |
+| `GCP_REGISTRY` | Yes* | - | Artifact Registry URL (for Docker runtime) |
+| `FC_SNAPSHOT_NAME` | No | - | Snapshot name (enables Firecracker support) |
+| `FC_MACHINE_TYPE` | No | `n2-standard-8` | Machine type for Firecracker VMs |
+| `AGENT_TOKEN` | No | - | Token for agent authentication |
+| `GCP_USE_SPOT` | No | `false` | Use spot/preemptible VMs |
+
+*Required only for Docker runtime
+
+---
+
+## Request Flow Detail
+
+### Workshop Creation (Firecracker)
 
 ```
-ws://<agent-ip>:9090/proxy/<workshop-id>/<seat-id>/terminal
+POST /api/workshops { runtime_type: "firecracker", seats: 3 }
+    │
+    ├─► Store workshop in DB (status: "provisioning")
+    ├─► Return 200 immediately
+    │
+    └─► [Async Goroutine]
+        │
+        ├─► GCPFirecrackerProvider.CreateVM()
+        │   ├─► Create GCP VM from clara2-snapshot
+        │   ├─► VM boots, agent starts via systemd
+        │   ├─► Poll GET /health until ready (2 min timeout)
+        │   ├─► POST /vms for each seat (creates MicroVMs)
+        │   └─► Return VMInstance with external IP
+        │
+        ├─► Store VM info in DB
+        └─► Update workshop status: "running"
 ```
 
-Example with websocat:
-```bash
-websocat ws://34.68.136.93:9090/proxy/my-workshop/1/terminal
-```
-
-### Files API (HTTP)
+### User Join
 
 ```
-http://<agent-ip>:9090/proxy/<workshop-id>/<seat-id>/files/
+GET /api/session/{accessCode}
+    │
+    ├─► Lookup registration by code
+    ├─► Get workshop (includes runtime_type)
+    ├─► Get VM (includes external IP)
+    ├─► Assign seat to user
+    │
+    └─► Return:
+        {
+          "status": "ready",
+          "endpoint": "http://{vm_ip}:9090",  // port 9090 for Firecracker
+          "seat": 1,
+          "runtime_type": "firecracker"
+        }
 ```
 
-Example:
-```bash
-# List files
-curl http://34.68.136.93:9090/proxy/my-workshop/1/files/
+### Workspace Access
 
-# Create a file
-curl -X POST http://34.68.136.93:9090/proxy/my-workshop/1/files/hello.txt \
-  -H "Content-Type: text/plain" \
-  -d "Hello, World!"
+```
+Frontend connects to:
+  Terminal: ws://{endpoint}/proxy/{workshop_id}/{seat}/terminal
+  Files:    http://{endpoint}/proxy/{workshop_id}/{seat}/files/
+  Health:   http://{endpoint}/proxy/{workshop_id}/{seat}/health
 ```
 
-## Files Created/Modified
+---
 
-| File | Action | Description |
-|------|--------|-------------|
-| `internal/provisioner/gcp_firecracker.go` | Created | GCP + Firecracker provisioner |
-| `internal/agentapi/proxy.go` | Created | WebSocket + HTTP proxy |
-| `internal/agentapi/server.go` | Modified | Added proxy routes |
-| `internal/orchestrator/firecracker.go` | Modified | Added `init=` kernel param |
-| `scripts/clarateach-agent.service` | Created | Systemd service file |
-| `scripts/test-e2e-local.sh` | Created | Local agent test |
-| `scripts/test-e2e-gcp.sh` | Created | Full GCP test |
-| `docs/TestingGuide.md` | Created | Comprehensive testing docs |
+## Files Reference
 
-## Remaining Work
+| File | Purpose |
+|------|---------|
+| `backend/internal/api/server.go` | API handlers, provisioner routing |
+| `backend/internal/provisioner/gcp_firecracker.go` | GCP + Firecracker provisioner |
+| `backend/internal/agentapi/server.go` | Agent API endpoints |
+| `backend/internal/agentapi/proxy.go` | WebSocket + HTTP proxy |
+| `backend/cmd/server/main.go` | Server initialization |
+| `backend/cmd/agent/main.go` | Agent initialization |
+| `frontend/src/pages/Dashboard.tsx` | Workshop creation UI |
+| `frontend/src/pages/Workspace.tsx` | Workspace UI (terminal, files) |
 
-1. **Update clara2 snapshot** - Requires stopping VM to capture current state
-2. **Full GCP integration test** - Run `test-e2e-gcp.sh` against live backend
-3. **Unit tests** - Add tests for provisioner and proxy code
+---
 
-## Definition of Done
+## Previous Work (Completed)
 
-- [x] Can create MicroVMs via agent API
-- [x] MicroVMs boot with working terminal + file servers
+### Agent & MicroVM Infrastructure ✅
+
+- [x] Agent creates MicroVMs via Firecracker
+- [x] Network bridge + TAP devices working
+- [x] Workspace server runs in MicroVM (terminal :3001, files :3002)
 - [x] Agent proxy routes traffic to MicroVMs
-- [x] E2E test script passes (14/14 tests)
-- [x] Documentation updated (TestingGuide.md)
-- [ ] Update clara2 snapshot with current rootfs
-- [ ] Full GCP provisioning tested end-to-end
+- [x] Agent systemd service auto-starts on boot
+- [x] E2E test scripts pass (14/14 tests)
+
+### GCP Integration ✅
+
+- [x] `GCPFirecrackerProvider` creates VMs from snapshot
+- [x] Waits for agent health
+- [x] Creates MicroVMs via agent API
+- [x] Passes agent token via GCP metadata
+- [x] Error handling and rollback
+
+### Documentation ✅
+
+- [x] VM snapshot setup documented (FIRECRACKER_IMPLEMENTATION_PLAN.md)
+- [x] Testing guide updated
+- [x] Laptop development instructions (this document)
+
+---
+
+## Definition of Done (Next Phase)
+
+- [ ] Frontend has runtime_type selector in workshop creation
+- [ ] Can create Firecracker workshop from portal UI
+- [ ] User can join and access workspace via portal
+- [ ] Terminal and file editor work correctly
+- [ ] Workshop deletion cleans up VM
