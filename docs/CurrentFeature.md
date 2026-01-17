@@ -134,10 +134,115 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 | `frontend/src/pages/SessionWorkspace.tsx` | Token in WebSocket URL |
 | `frontend/src/lib/api.ts` | Store token from session |
 
+## Deployment: Portal VM Setup
+
+**Target:** Single small VM with Cloudflare Tunnel (no exposed ports)
+
+```
+learn.claramap.com → Cloudflare Tunnel → e2-small VM
+                                              ├── nginx (frontend :80)
+                                              ├── backend (:8080)
+                                              └── SQLite DB
+```
+
+### 1. Create VM
+```bash
+gcloud compute instances create clarateach-portal \
+  --project=clarateach \
+  --zone=us-central1-a \
+  --machine-type=e2-small \
+  --image-family=ubuntu-2204-lts \
+  --image-project=ubuntu-os-cloud \
+  --boot-disk-size=20GB
+```
+
+### 2. Install Dependencies
+```bash
+# On the VM
+sudo apt update && sudo apt install -y nginx
+
+# Install cloudflared
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+```
+
+### 3. Create Cloudflare Tunnel
+```bash
+# Login to Cloudflare
+cloudflared tunnel login
+
+# Create tunnel
+cloudflared tunnel create clarateach-portal
+
+# Route DNS
+cloudflared tunnel route dns clarateach-portal learn.claramap.com
+```
+
+### 4. Configure Tunnel (`/etc/cloudflared/config.yml`)
+```yaml
+tunnel: <TUNNEL_ID>
+credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: learn.claramap.com
+    path: /api/*
+    service: http://localhost:8080
+  - hostname: learn.claramap.com
+    service: http://localhost:80
+  - service: http_status:404
+```
+
+### 5. Systemd Service (`/etc/systemd/system/cloudflared.service`)
+```ini
+[Unit]
+Description=Cloudflare Tunnel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel run
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 6. Deploy Backend
+```bash
+# Copy binary and create service
+scp backend/server clarateach-portal:/usr/local/bin/clarateach-backend
+
+# Environment file: /etc/clarateach/backend.env
+GCP_PROJECT=clarateach
+GCP_ZONE=us-central1-a
+GCP_REGISTRY=us-central1-docker.pkg.dev/clarateach/clarateach
+FC_SNAPSHOT_NAME=clara2-snapshot
+FC_AGENT_TOKEN=<token>
+BACKEND_URL=https://learn.claramap.com
+WORKSPACE_TOKEN_SECRET=<secret>
+CORS_ORIGINS=https://learn.claramap.com
+DB_PATH=/var/lib/clarateach/clarateach.db
+```
+
+### 7. Deploy Frontend
+```bash
+cd frontend && npm run build
+scp -r dist/* clarateach-portal:/var/www/html/
+```
+
+### 8. Start Services
+```bash
+sudo systemctl enable --now cloudflared
+sudo systemctl enable --now clarateach-backend
+sudo systemctl restart nginx
+```
+
 ## Definition of Done
 
-- [ ] All traffic over HTTPS
+- [ ] All traffic over HTTPS via Cloudflare Tunnel
 - [ ] VM reports tunnel URL to backend on boot
 - [ ] WebSocket connections require valid JWT
 - [ ] Invalid token → 401 rejection
 - [ ] Direct IP access to agent blocked
+- [ ] Portal accessible at https://learn.claramap.com
