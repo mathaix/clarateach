@@ -20,25 +20,29 @@ import (
 // It creates a VM from a pre-baked snapshot that has the agent installed, then
 // calls the agent API to create MicroVMs for each seat.
 type GCPFirecrackerProvider struct {
-	project      string
-	zone         string
-	snapshotName string // Snapshot with agent pre-installed (e.g., "clara2-snapshot")
-	network      string
-	machineType  string // Must support nested virt (n2-standard-8)
-	agentPort    int
-	agentToken   string
-	httpClient   *http.Client
+	project              string
+	zone                 string
+	snapshotName         string // Snapshot with agent pre-installed (e.g., "clara2-snapshot")
+	network              string
+	machineType          string // Must support nested virt (n2-standard-8)
+	agentPort            int
+	agentToken           string
+	backendURL           string // Backend URL for tunnel registration
+	workspaceTokenSecret string // Secret for workspace JWT validation
+	httpClient           *http.Client
 }
 
 // GCPFirecrackerConfig holds configuration for the GCP Firecracker provider
 type GCPFirecrackerConfig struct {
-	Project      string
-	Zone         string
-	SnapshotName string // Required: snapshot with agent pre-installed
-	Network      string // default: "default"
-	MachineType  string // default: "n2-standard-8"
-	AgentPort    int    // default: 9090
-	AgentToken   string // Token for agent authentication
+	Project              string
+	Zone                 string
+	SnapshotName         string // Required: snapshot with agent pre-installed
+	Network              string // default: "default"
+	MachineType          string // default: "n2-standard-8"
+	AgentPort            int    // default: 9090
+	AgentToken           string // Token for agent authentication
+	BackendURL           string // Backend URL for tunnel registration (e.g., https://learn.claramap.com)
+	WorkspaceTokenSecret string // Secret for workspace JWT validation
 }
 
 // NewGCPFirecrackerProvider creates a new GCP Firecracker provisioner
@@ -54,13 +58,15 @@ func NewGCPFirecrackerProvider(cfg GCPFirecrackerConfig) *GCPFirecrackerProvider
 	}
 
 	return &GCPFirecrackerProvider{
-		project:      cfg.Project,
-		zone:         cfg.Zone,
-		snapshotName: cfg.SnapshotName,
-		network:      cfg.Network,
-		machineType:  cfg.MachineType,
-		agentPort:    cfg.AgentPort,
-		agentToken:   cfg.AgentToken,
+		project:              cfg.Project,
+		zone:                 cfg.Zone,
+		snapshotName:         cfg.SnapshotName,
+		network:              cfg.Network,
+		machineType:          cfg.MachineType,
+		agentPort:            cfg.AgentPort,
+		agentToken:           cfg.AgentToken,
+		backendURL:           cfg.BackendURL,
+		workspaceTokenSecret: cfg.WorkspaceTokenSecret,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -110,9 +116,23 @@ func (p *GCPFirecrackerProvider) createGCPVM(ctx context.Context, cfg VMConfig) 
 
 	// Build metadata
 	metadata := []*computepb.Items{
-		{Key: proto.String("workshop_id"), Value: proto.String(cfg.WorkshopID)},
+		{Key: proto.String("workshop-id"), Value: proto.String(cfg.WorkshopID)},
 		{Key: proto.String("seats"), Value: proto.String(strconv.Itoa(cfg.Seats))},
 		{Key: proto.String("agent-token"), Value: proto.String(p.agentToken)},
+	}
+
+	// Add tunnel-related metadata if configured
+	if p.backendURL != "" {
+		metadata = append(metadata, &computepb.Items{
+			Key:   proto.String("backend-url"),
+			Value: proto.String(p.backendURL),
+		})
+	}
+	if p.workspaceTokenSecret != "" {
+		metadata = append(metadata, &computepb.Items{
+			Key:   proto.String("workspace-token-secret"),
+			Value: proto.String(p.workspaceTokenSecret),
+		})
 	}
 
 	// Add SSH key if provided

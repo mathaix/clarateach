@@ -39,8 +39,10 @@ func main() {
 	authDisabled := os.Getenv("AUTH_DISABLED") == "true"
 
 	// Firecracker configuration (optional)
-	fcSnapshotName := os.Getenv("FC_SNAPSHOT_NAME") // e.g., "clara2-snapshot"
-	fcAgentToken := os.Getenv("FC_AGENT_TOKEN")     // Token for agent authentication
+	fcSnapshotName := os.Getenv("FC_SNAPSHOT_NAME")       // e.g., "clara2-snapshot"
+	fcAgentToken := os.Getenv("FC_AGENT_TOKEN")           // Token for agent authentication
+	backendURL := os.Getenv("BACKEND_URL")                // e.g., "https://learn.claramap.com"
+	workspaceTokenSecret := os.Getenv("WORKSPACE_TOKEN_SECRET")
 
 	// 1. Initialize Store
 	db, err := store.InitDB(dbPath)
@@ -64,10 +66,12 @@ func main() {
 	if fcSnapshotName != "" {
 		log.Printf("Initializing GCP Firecracker provisioner with snapshot: %s", fcSnapshotName)
 		fcProvisioner := provisioner.NewGCPFirecrackerProvider(provisioner.GCPFirecrackerConfig{
-			Project:      gcpProject,
-			Zone:         gcpZone,
-			SnapshotName: fcSnapshotName,
-			AgentToken:   fcAgentToken,
+			Project:              gcpProject,
+			Zone:                 gcpZone,
+			SnapshotName:         fcSnapshotName,
+			AgentToken:           fcAgentToken,
+			BackendURL:           backendURL,
+			WorkspaceTokenSecret: workspaceTokenSecret,
 		})
 		apiServer.SetGCPFirecrackerProvisioner(fcProvisioner)
 	}

@@ -14,9 +14,10 @@ Secure all ClaraTeach traffic with HTTPS using Cloudflare for the portal and Qui
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Cloudflare DNS (portal) | ⬜ Not started | `learn.claramap.com` → origin |
-| Agent VM cloudflared | ⬜ Not started | Install in snapshot, quick tunnel startup |
+| Agent VM cloudflared | ✅ Complete | Scripts ready, install in snapshot |
 | Backend tunnel registration | ✅ Complete | `POST /api/internal/workshops/{id}/tunnel` |
 | Backend JWT generation | ✅ Complete | Token in session response |
+| Backend VM metadata | ✅ Complete | Passes workshop-id, backend-url, workspace-token-secret |
 | Agent JWT validation | ✅ Complete | Validates query param or Authorization header |
 | Frontend token handling | ✅ Complete | Passes token to WebSocket and HTTP requests |
 
@@ -87,9 +88,12 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 ## Implementation Tasks
 
 ### Phase 1: Agent VM Changes
-- [ ] Install `cloudflared` in VM snapshot
-- [ ] Pass metadata: workshop-id, backend-url, workspace-token-secret
-- [ ] Startup script runs quick tunnel, captures URL, reports to backend
+- [x] Create `clarateach-tunnel.service` systemd unit
+- [x] Create `clarateach-tunnel.sh` startup script
+- [x] Update `clarateach-agent.service` to fetch workspace-token-secret
+- [x] Update `prepare-snapshot.sh` with cloudflared verification
+- [x] Pass metadata via GCP: workshop-id, backend-url, workspace-token-secret
+- [ ] **Deploy**: Install `cloudflared` on VM and create new snapshot
 
 ### Phase 2: Backend Changes
 - [x] Add `POST /api/internal/workshops/{id}/tunnel` endpoint
@@ -97,6 +101,7 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 - [x] Add `WORKSPACE_TOKEN_SECRET` env var
 - [x] Generate JWT in `/api/session/{code}` response
 - [x] Return tunnel URL + token in session response
+- [x] Pass `BACKEND_URL` and `WORKSPACE_TOKEN_SECRET` to provisioner
 
 ### Phase 3: Agent Auth Changes
 - [x] Extract token from WebSocket URL query param or Authorization header
@@ -118,9 +123,14 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 | `backend/internal/api/server.go` | Tunnel registration, JWT generation |
 | `backend/internal/provisioner/gcp_firecracker.go` | Pass metadata to VM |
 | `backend/internal/agentapi/proxy.go` | JWT validation |
-| `scripts/prepare-snapshot.sh` | Install cloudflared |
-| `scripts/clarateach-agent.service` | Quick tunnel startup |
-| `frontend/src/pages/Workspace.tsx` | Token in WebSocket URL |
+| `backend/internal/auth/auth.go` | Workspace token functions |
+| `backend/internal/store/store.go` | TunnelURL field in WorkshopVM |
+| `backend/cmd/server/main.go` | BACKEND_URL, WORKSPACE_TOKEN_SECRET config |
+| `scripts/prepare-snapshot.sh` | Verify cloudflared installed |
+| `scripts/clarateach-agent.service` | Agent service with token secret |
+| `scripts/clarateach-tunnel.service` | Quick tunnel systemd service |
+| `scripts/clarateach-tunnel.sh` | Quick tunnel startup + URL reporting |
+| `frontend/src/pages/SessionWorkspace.tsx` | Token in WebSocket URL |
 | `frontend/src/lib/api.ts` | Store token from session |
 
 ## Definition of Done
