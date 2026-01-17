@@ -41,6 +41,8 @@ export function SessionWorkspace() {
           seat: response.seat!,
           token: '', // No token needed with registration flow
           name: response.name,
+          workshop_id: response.workshop_id,
+          runtime_type: response.runtime_type,
         });
         setSession(response);
         setStatus('ready');

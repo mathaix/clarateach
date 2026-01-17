@@ -8,6 +8,8 @@ const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || '3001', 10);
 const FILES_PORT = parseInt(process.env.FILES_PORT || '3002', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace';
+// In MicroVM mode, routes don't have /vm/:seat prefix (single-tenant)
+const MICROVM_MODE = process.env.MICROVM_MODE === 'true';
 
 async function buildServer(enableWebsocket: boolean) {
   const fastify = Fastify({
@@ -43,10 +45,10 @@ async function buildServer(enableWebsocket: boolean) {
 
 async function main() {
   const terminalServer = await buildServer(true);
-  registerTerminalRoutes(terminalServer, WORKSPACE_DIR);
+  registerTerminalRoutes(terminalServer, WORKSPACE_DIR, MICROVM_MODE);
 
   const fileServer = await buildServer(false);
-  registerFileRoutes(fileServer, WORKSPACE_DIR);
+  registerFileRoutes(fileServer, WORKSPACE_DIR, MICROVM_MODE);
 
   try {
     await terminalServer.listen({ port: TERMINAL_PORT, host: HOST });

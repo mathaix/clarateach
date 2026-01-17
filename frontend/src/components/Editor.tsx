@@ -91,7 +91,18 @@ export function Editor() {
   const [refreshing, setRefreshing] = useState(false);
 
   const session = getWorkspaceSession();
-  const API_BASE = session ? `${session.endpoint}/vm/${session.seat}` : '';
+
+  // Build API base path based on runtime type
+  const getApiBase = (): string => {
+    if (!session) return '';
+    if (session.runtime_type === 'firecracker' && session.workshop_id) {
+      // Firecracker proxy: /proxy/{workshopID}/{seatID}
+      return `${session.endpoint}/proxy/${session.workshop_id}/${session.seat}`;
+    }
+    // Docker workspace: /vm/{seat}
+    return `${session.endpoint}/vm/${session.seat}`;
+  };
+  const API_BASE = getApiBase();
 
   const getHeaders = (extra?: Record<string, string>): Record<string, string> => {
     const headers: Record<string, string> = { ...extra };

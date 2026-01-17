@@ -5,6 +5,8 @@ export interface WorkspaceSession {
   seat: number;
   code?: string;
   name?: string;
+  workshop_id?: string;
+  runtime_type?: 'docker' | 'firecracker';
 }
 
 // In-memory session storage for new registration flow

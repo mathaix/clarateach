@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, PlayCircle, Clock, Users, Trash2, Eye, Loader2 } from 'lucide-react';
+import { Plus, PlayCircle, Clock, Users, Trash2, Eye, Loader2, Cpu, Container } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,6 +21,7 @@ export function Dashboard() {
     name: '',
     seats: '10',
     api_key: '',
+    runtime_type: 'docker' as 'docker' | 'firecracker',
   });
 
   useEffect(() => {
@@ -56,10 +57,11 @@ export function Dashboard() {
         name: formData.name,
         seats: parseInt(formData.seats),
         api_key: formData.api_key,
+        runtime_type: formData.runtime_type,
       });
       // Close form and reset state immediately
       setShowCreateForm(false);
-      setFormData({ name: '', seats: '10', api_key: '' });
+      setFormData({ name: '', seats: '10', api_key: '', runtime_type: 'docker' });
       setCreating(false);
       // Then refresh the list
       await loadWorkshops();
@@ -183,6 +185,19 @@ export function Dashboard() {
                   />
                   <p className="text-sm text-gray-500 mt-1">Used for Claude Code in learner workspaces</p>
                 </div>
+                <div>
+                  <Label htmlFor="runtime_type">Runtime Type</Label>
+                  <select
+                    id="runtime_type"
+                    value={formData.runtime_type}
+                    onChange={(e) => setFormData({ ...formData, runtime_type: e.target.value as 'docker' | 'firecracker' })}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="docker">Docker (Standard)</option>
+                    <option value="firecracker">Firecracker (MicroVMs)</option>
+                  </select>
+                  <p className="text-sm text-gray-500 mt-1">Choose the container runtime for workspaces</p>
+                </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button className="w-full sm:w-auto" type="submit" disabled={creating}>
                     {creating ? 'Creating...' : 'Create Workshop'}
@@ -209,6 +224,17 @@ export function Dashboard() {
                           <h3 className="text-lg text-gray-900">{workshop.name}</h3>
                           <span className={`text-xs px-2 py-1 rounded-full ${getStatusBadge(workshop.status)}`}>
                             {workshop.status}
+                          </span>
+                          <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${
+                            workshop.runtime_type === 'firecracker'
+                              ? 'bg-purple-100 text-purple-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {workshop.runtime_type === 'firecracker' ? (
+                              <><Cpu className="w-3 h-3" /> MicroVM</>
+                            ) : (
+                              <><Container className="w-3 h-3" /> Docker</>
+                            )}
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">

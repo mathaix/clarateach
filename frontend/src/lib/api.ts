@@ -77,7 +77,7 @@ class ApiClient {
     return this.request(`/workshops/${id}`);
   }
 
-  async createWorkshop(data: { name: string; seats: number; api_key: string }): Promise<{ workshop: Workshop }> {
+  async createWorkshop(data: { name: string; seats: number; api_key: string; runtime_type?: 'docker' | 'firecracker' }): Promise<{ workshop: Workshop }> {
     return this.request('/workshops', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -189,6 +189,7 @@ export interface SessionResponse {
   seat?: number;
   name?: string;
   workshop_id?: string;
+  runtime_type?: 'docker' | 'firecracker';
 }
 
 // Admin types

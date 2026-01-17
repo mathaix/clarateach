@@ -1,4 +1,4 @@
-export type WorkshopStatus = 'created' | 'provisioning' | 'running' | 'stopping' | 'stopped' | 'error';
+export type WorkshopStatus = 'created' | 'provisioning' | 'running' | 'stopping' | 'stopped' | 'deleting' | 'deleted' | 'error';
 
 export interface Workshop {
   id: string;
@@ -6,6 +6,7 @@ export interface Workshop {
   code: string;
   seats: number;
   status: WorkshopStatus;
+  runtime_type?: 'docker' | 'firecracker';
   created_at: string;
   vm_name?: string;
   vm_ip?: string;

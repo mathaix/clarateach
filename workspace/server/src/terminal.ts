@@ -11,12 +11,18 @@ interface TerminalMessage {
   rows?: number;
 }
 
-export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: string) {
+export function registerTerminalRoutes(fastify: FastifyInstance, workspaceDir: string, microvmMode = false) {
+  // In MicroVM mode, skip seat enforcement (single-tenant)
   const seatGuard = async (request: FastifyRequest, reply: FastifyReply) => {
-    enforceSeatAccess(request, reply);
+    if (!microvmMode) {
+      enforceSeatAccess(request, reply);
+    }
   };
 
-  fastify.get('/vm/:seat/terminal', { websocket: true, preHandler: [wsAuthMiddleware, seatGuard] }, (socket: WebSocket, request) => {
+  // Route: /vm/:seat/terminal in Docker mode, /terminal in MicroVM mode
+  const terminalRoute = microvmMode ? '/terminal' : '/vm/:seat/terminal';
+
+  fastify.get(terminalRoute, { websocket: true, preHandler: [wsAuthMiddleware, seatGuard] }, (socket: WebSocket, request) => {
     const authRequest = request as AuthenticatedRequest;
     const { seat, workshop_id, name } = authRequest.token;
     const ws = (socket as unknown as { socket?: WebSocket }).socket ?? socket;

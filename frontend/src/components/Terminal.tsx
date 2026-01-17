@@ -72,9 +72,19 @@ export function Terminal() {
       const endpointUrl = new URL(session.endpoint);
       const wsProtocol = endpointUrl.protocol === 'https:' ? 'wss:' : 'ws:';
       const tokenParam = session.token ? `?token=${encodeURIComponent(session.token)}` : '';
-      // Ensure we keep the pathname (e.g. /debug/proxy/ws-id)
-      const basePath = endpointUrl.pathname === '/' ? '' : endpointUrl.pathname;
-      const wsUrl = `${wsProtocol}//${endpointUrl.host}${basePath}/vm/${session.seat}/terminal${tokenParam}`;
+
+      // Build path based on runtime type
+      let wsPath: string;
+      if (session.runtime_type === 'firecracker' && session.workshop_id) {
+        // Firecracker proxy: /proxy/{workshopID}/{seatID}/terminal
+        wsPath = `/proxy/${session.workshop_id}/${session.seat}/terminal`;
+      } else {
+        // Docker workspace: /vm/{seat}/terminal
+        const basePath = endpointUrl.pathname === '/' ? '' : endpointUrl.pathname;
+        wsPath = `${basePath}/vm/${session.seat}/terminal`;
+      }
+
+      const wsUrl = `${wsProtocol}//${endpointUrl.host}${wsPath}${tokenParam}`;
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
