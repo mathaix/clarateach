@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/clarateach/backend/internal/auth"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
@@ -37,6 +39,53 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
+// isTokenValidationEnabled returns true if workspace tokens should be validated
+func isTokenValidationEnabled() bool {
+	// Enable validation if WORKSPACE_TOKEN_SECRET is set
+	return os.Getenv("WORKSPACE_TOKEN_SECRET") != ""
+}
+
+// validateWorkspaceToken validates the token and verifies it matches the request
+// Token can be provided via:
+// - Query param: ?token=xxx (for WebSocket connections)
+// - Authorization header: Bearer xxx (for HTTP requests)
+func validateWorkspaceToken(r *http.Request, workshopID string, seatID int) error {
+	if !isTokenValidationEnabled() {
+		return nil // Skip validation in dev mode
+	}
+
+	// Try to get token from query param first (WebSocket)
+	token := r.URL.Query().Get("token")
+
+	// Fall back to Authorization header (HTTP)
+	if token == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if token == "" {
+		return fmt.Errorf("missing token")
+	}
+
+	// Validate token
+	claims, err := auth.ValidateWorkspaceToken(token)
+	if err != nil {
+		return fmt.Errorf("invalid token: %v", err)
+	}
+
+	// Verify claims match request
+	if claims.WorkshopID != workshopID {
+		return fmt.Errorf("token workshop_id mismatch")
+	}
+	if claims.Seat != seatID {
+		return fmt.Errorf("token seat mismatch")
+	}
+
+	return nil
+}
+
 // getMicroVMIP returns the IP address for a MicroVM based on seat ID
 func getMicroVMIP(seatID int) string {
 	return fmt.Sprintf("192.168.100.%d", 10+seatID)
@@ -50,6 +99,13 @@ func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
 	seatID, err := strconv.Atoi(seatIDStr)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "invalid_seat_id", "seat_id must be an integer")
+		return
+	}
+
+	// Validate workspace token
+	if err := validateWorkspaceToken(r, workshopID, seatID); err != nil {
+		s.logger.Warnf("Token validation failed for terminal %s/%d: %v", workshopID, seatID, err)
+		s.writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing workspace token")
 		return
 	}
 
@@ -143,6 +199,13 @@ func (s *Server) handleFilesProxy(w http.ResponseWriter, r *http.Request) {
 	seatID, err := strconv.Atoi(seatIDStr)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "invalid_seat_id", "seat_id must be an integer")
+		return
+	}
+
+	// Validate workspace token
+	if err := validateWorkspaceToken(r, workshopID, seatID); err != nil {
+		s.logger.Warnf("Token validation failed for files %s/%d: %v", workshopID, seatID, err)
+		s.writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing workspace token")
 		return
 	}
 

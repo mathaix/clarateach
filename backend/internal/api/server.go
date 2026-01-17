@@ -136,6 +136,11 @@ func (s *Server) routes() {
 			r.Get("/vms/{workshop_id}/ssh-key", s.getSSHKey)
 			r.Get("/users", s.listUsers)
 		})
+
+		// Internal API for agent VMs (no auth - called from within GCP)
+		r.Route("/internal", func(r chi.Router) {
+			r.Post("/workshops/{id}/tunnel", s.registerTunnel)
+		})
 	})
 
 	// Seed admin user on startup if configured
@@ -840,23 +845,81 @@ func (s *Server) getSessionByCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build endpoint URL based on runtime type
+	// Build endpoint URL based on runtime type and tunnel availability
 	var endpoint string
 	if workshop.RuntimeType == "firecracker" {
-		// Firecracker agent runs on port 9090
-		endpoint = fmt.Sprintf("http://%s:9090", vm.ExternalIP)
+		// Prefer tunnel URL if available (HTTPS via Cloudflare)
+		if vm.TunnelURL != "" {
+			endpoint = vm.TunnelURL
+		} else {
+			// Fallback to direct IP (HTTP) - only for development
+			endpoint = fmt.Sprintf("http://%s:9090", vm.ExternalIP)
+		}
 	} else {
 		// Docker workspace server runs on port 8080
 		endpoint = fmt.Sprintf("http://%s:8080", vm.ExternalIP)
 	}
 
+	// Generate workspace token for WebSocket authentication
+	token, err := auth.GenerateWorkspaceToken(workshop.ID, *registration.SeatID)
+	if err != nil {
+		log.Printf("Failed to generate workspace token: %v", err)
+		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":       "ready",
 		"endpoint":     endpoint,
+		"token":        token,
 		"seat":         *registration.SeatID,
 		"name":         registration.Name,
 		"workshop_id":  workshop.ID,
 		"runtime_type": workshop.RuntimeType,
+	})
+}
+
+// ================== Internal API Handlers ==================
+
+func (s *Server) registerTunnel(w http.ResponseWriter, r *http.Request) {
+	workshopID := chi.URLParam(r, "id")
+
+	var req struct {
+		TunnelURL string `json:"tunnel_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TunnelURL == "" {
+		http.Error(w, "tunnel_url is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify workshop exists
+	workshop, err := s.store.GetWorkshop(workshopID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if workshop == nil {
+		http.Error(w, "Workshop not found", http.StatusNotFound)
+		return
+	}
+
+	// Update tunnel URL
+	if err := s.store.UpdateVMTunnelURL(workshopID, req.TunnelURL); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Tunnel URL registered for workshop %s: %s", workshopID, req.TunnelURL)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"tunnel_url": req.TunnelURL,
 	})
 }
 

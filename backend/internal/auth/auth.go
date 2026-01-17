@@ -23,11 +23,18 @@ type contextKey string
 
 const UserContextKey contextKey = "user"
 
-// Claims represents JWT claims
+// Claims represents JWT claims for user authentication
 type Claims struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+// WorkspaceClaims represents JWT claims for workspace access
+type WorkspaceClaims struct {
+	WorkshopID string `json:"workshop_id"`
+	Seat       int    `json:"seat"`
 	jwt.RegisteredClaims
 }
 
@@ -38,6 +45,47 @@ func GetJWTSecret() []byte {
 		secret = "clarateach-dev-secret-change-in-production"
 	}
 	return []byte(secret)
+}
+
+// GetWorkspaceTokenSecret returns the workspace token secret from env or default
+func GetWorkspaceTokenSecret() []byte {
+	secret := os.Getenv("WORKSPACE_TOKEN_SECRET")
+	if secret == "" {
+		secret = "clarateach-workspace-dev-secret-change-in-production"
+	}
+	return []byte(secret)
+}
+
+// GenerateWorkspaceToken creates a JWT token for workspace access
+func GenerateWorkspaceToken(workshopID string, seat int) (string, error) {
+	claims := &WorkspaceClaims{
+		WorkshopID: workshopID,
+		Seat:       seat,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(4 * time.Hour)), // 4 hour expiry
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   workshopID,
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(GetWorkspaceTokenSecret())
+}
+
+// ValidateWorkspaceToken validates a workspace JWT token and returns the claims
+func ValidateWorkspaceToken(tokenString string) (*WorkspaceClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &WorkspaceClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return GetWorkspaceTokenSecret(), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if claims, ok := token.Claims.(*WorkspaceClaims); ok && token.Valid {
+		return claims, nil
+	}
+
+	return nil, errors.New("invalid workspace token")
 }
 
 // HashPassword hashes a password using bcrypt

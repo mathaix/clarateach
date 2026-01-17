@@ -197,10 +197,10 @@ func (s *SQLiteStore) ListSessions(workshopID string) ([]*Session, error) {
 // -- VM Operations --
 
 func (s *SQLiteStore) CreateVM(vm *WorkshopVM) error {
-	query := `INSERT INTO workshop_vms (id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, status, ssh_public_key, ssh_private_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO workshop_vms (id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, tunnel_url, status, ssh_public_key, ssh_private_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query, vm.ID, vm.WorkshopID, vm.VMName, vm.VMID, vm.Zone, vm.MachineType,
-		vm.ExternalIP, vm.InternalIP, vm.Status, vm.SSHPublicKey, vm.SSHPrivateKey, vm.SSHUser,
+		vm.ExternalIP, vm.InternalIP, vm.TunnelURL, vm.Status, vm.SSHPublicKey, vm.SSHPrivateKey, vm.SSHUser,
 		vm.ProvisioningStartedAt, vm.ProvisioningCompletedAt, vm.ProvisioningDurationMs, vm.RemovedAt,
 		vm.CreatedAt, vm.UpdatedAt)
 	return err
@@ -208,11 +208,11 @@ func (s *SQLiteStore) CreateVM(vm *WorkshopVM) error {
 
 func (s *SQLiteStore) GetVM(workshopID string) (*WorkshopVM, error) {
 	vm := &WorkshopVM{}
-	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
+	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
 			  FROM workshop_vms WHERE workshop_id = ? AND removed_at IS NULL ORDER BY created_at DESC LIMIT 1`
 	err := s.db.QueryRow(query, workshopID).Scan(
 		&vm.ID, &vm.WorkshopID, &vm.VMName, &vm.VMID, &vm.Zone, &vm.MachineType,
-		&vm.ExternalIP, &vm.InternalIP, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
+		&vm.ExternalIP, &vm.InternalIP, &vm.TunnelURL, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
 		&vm.ProvisioningStartedAt, &vm.ProvisioningCompletedAt, &vm.ProvisioningDurationMs,
 		&vm.RemovedAt, &vm.CreatedAt, &vm.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -223,11 +223,11 @@ func (s *SQLiteStore) GetVM(workshopID string) (*WorkshopVM, error) {
 
 func (s *SQLiteStore) GetVMByID(id string) (*WorkshopVM, error) {
 	vm := &WorkshopVM{}
-	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
+	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
 			  FROM workshop_vms WHERE id = ?`
 	err := s.db.QueryRow(query, id).Scan(
 		&vm.ID, &vm.WorkshopID, &vm.VMName, &vm.VMID, &vm.Zone, &vm.MachineType,
-		&vm.ExternalIP, &vm.InternalIP, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
+		&vm.ExternalIP, &vm.InternalIP, &vm.TunnelURL, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
 		&vm.ProvisioningStartedAt, &vm.ProvisioningCompletedAt, &vm.ProvisioningDurationMs,
 		&vm.RemovedAt, &vm.CreatedAt, &vm.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -243,6 +243,12 @@ func (s *SQLiteStore) UpdateVM(vm *WorkshopVM) error {
 	return err
 }
 
+func (s *SQLiteStore) UpdateVMTunnelURL(workshopID, tunnelURL string) error {
+	query := `UPDATE workshop_vms SET tunnel_url = ?, updated_at = CURRENT_TIMESTAMP WHERE workshop_id = ? AND removed_at IS NULL`
+	_, err := s.db.Exec(query, tunnelURL, workshopID)
+	return err
+}
+
 func (s *SQLiteStore) MarkVMRemoved(workshopID string) error {
 	query := `UPDATE workshop_vms SET status = 'removed', removed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE workshop_id = ? AND removed_at IS NULL`
 	_, err := s.db.Exec(query, workshopID)
@@ -250,7 +256,7 @@ func (s *SQLiteStore) MarkVMRemoved(workshopID string) error {
 }
 
 func (s *SQLiteStore) ListVMs() ([]*WorkshopVM, error) {
-	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
+	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
 			  FROM workshop_vms WHERE removed_at IS NULL ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -263,7 +269,7 @@ func (s *SQLiteStore) ListVMs() ([]*WorkshopVM, error) {
 		vm := &WorkshopVM{}
 		if err := rows.Scan(
 			&vm.ID, &vm.WorkshopID, &vm.VMName, &vm.VMID, &vm.Zone, &vm.MachineType,
-			&vm.ExternalIP, &vm.InternalIP, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
+			&vm.ExternalIP, &vm.InternalIP, &vm.TunnelURL, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
 			&vm.ProvisioningStartedAt, &vm.ProvisioningCompletedAt, &vm.ProvisioningDurationMs,
 			&vm.RemovedAt, &vm.CreatedAt, &vm.UpdatedAt); err != nil {
 			return nil, err
@@ -274,7 +280,7 @@ func (s *SQLiteStore) ListVMs() ([]*WorkshopVM, error) {
 }
 
 func (s *SQLiteStore) ListAllVMs() ([]*WorkshopVM, error) {
-	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
+	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
 			  FROM workshop_vms ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -287,7 +293,7 @@ func (s *SQLiteStore) ListAllVMs() ([]*WorkshopVM, error) {
 		vm := &WorkshopVM{}
 		if err := rows.Scan(
 			&vm.ID, &vm.WorkshopID, &vm.VMName, &vm.VMID, &vm.Zone, &vm.MachineType,
-			&vm.ExternalIP, &vm.InternalIP, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
+			&vm.ExternalIP, &vm.InternalIP, &vm.TunnelURL, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
 			&vm.ProvisioningStartedAt, &vm.ProvisioningCompletedAt, &vm.ProvisioningDurationMs,
 			&vm.RemovedAt, &vm.CreatedAt, &vm.UpdatedAt); err != nil {
 			return nil, err

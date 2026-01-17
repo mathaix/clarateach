@@ -39,6 +39,7 @@ type WorkshopVM struct {
 	MachineType            string     `json:"machine_type"`
 	ExternalIP             string     `json:"external_ip"`
 	InternalIP             string     `json:"internal_ip"`
+	TunnelURL              string     `json:"tunnel_url"`               // Cloudflare Quick Tunnel URL (e.g., https://xxx.trycloudflare.com)
 	Status                 string     `json:"status"`                   // provisioning, running, stopping, terminated, removed
 	SSHPublicKey           string     `json:"ssh_public_key"`           // OpenSSH format
 	SSHPrivateKey          string     `json:"-"`                        // Never return in JSON - PEM format
@@ -113,6 +114,7 @@ type Store interface {
 	GetVM(workshopID string) (*WorkshopVM, error)            // Gets active (non-removed) VM for workshop
 	GetVMByID(id string) (*WorkshopVM, error)
 	UpdateVM(vm *WorkshopVM) error
+	UpdateVMTunnelURL(workshopID, tunnelURL string) error    // Updates tunnel URL for a workshop's VM
 	MarkVMRemoved(workshopID string) error                   // Soft delete - marks VM as removed
 	ListVMs() ([]*WorkshopVM, error)                         // Lists active VMs only
 	ListAllVMs() ([]*WorkshopVM, error)                      // Lists all VMs including removed
@@ -173,6 +175,7 @@ CREATE TABLE IF NOT EXISTS workshop_vms (
 	machine_type TEXT NOT NULL,
 	external_ip TEXT,
 	internal_ip TEXT,
+	tunnel_url TEXT,
 	status TEXT NOT NULL DEFAULT 'provisioning',
 	ssh_public_key TEXT,
 	ssh_private_key TEXT,
@@ -221,6 +224,8 @@ func InitDB(dbPath string) (*sql.DB, error) {
 	migrations := []string{
 		// Add owner_id column to workshops if it doesn't exist
 		`ALTER TABLE workshops ADD COLUMN owner_id TEXT`,
+		// Add tunnel_url column to workshop_vms if it doesn't exist
+		`ALTER TABLE workshop_vms ADD COLUMN tunnel_url TEXT`,
 	}
 
 	for _, migration := range migrations {
