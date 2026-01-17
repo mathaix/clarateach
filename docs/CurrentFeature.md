@@ -20,8 +20,9 @@ Complete the end-to-end flow from portal to user workspace:
 | `GCPFirecrackerProvider` | ✅ Complete | Creates VM, waits for agent, creates MicroVMs |
 | Agent API | ✅ Complete | `POST /vms` creates MicroVMs, proxy routes traffic |
 | Session join flow | ✅ Complete | Routes to port 9090 for Firecracker runtime |
-| **Frontend workshop creation** | ❌ Missing | No UI to select runtime_type (defaults to docker) |
-| **Frontend workspace connection** | ⚠️ Needs testing | May need updates for agent endpoint format |
+| **Frontend workshop creation** | ✅ Complete | Runtime selector dropdown (Docker/Firecracker) |
+| **Frontend workspace connection** | ✅ Complete | Terminal, file explorer, editor all working |
+| **Workshop deletion** | ✅ Complete | Properly cleans up GCP VMs |
 
 ## Architecture
 
@@ -298,10 +299,12 @@ Frontend connects to:
 
 ---
 
-## Definition of Done (Next Phase)
+## Definition of Done (Next Phase) - COMPLETED
 
-- [ ] Frontend has runtime_type selector in workshop creation
-- [ ] Can create Firecracker workshop from portal UI
-- [ ] User can join and access workspace via portal
-- [ ] Terminal and file editor work correctly
-- [ ] Workshop deletion cleans up VM
+- [x] Frontend has runtime_type selector in workshop creation
+- [x] Can create Firecracker workshop from portal UI
+- [x] User can join and access workspace via portal
+- [x] Terminal and file editor work correctly
+- [x] Workshop deletion cleans up VM
+
+**Completed**: 2026-01-16

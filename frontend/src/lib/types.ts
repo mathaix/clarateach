@@ -6,6 +6,7 @@ export interface Workshop {
   code: string;
   seats: number;
   status: WorkshopStatus;
+  runtime_type?: 'docker' | 'firecracker';
   created_at: string;
   vm_name?: string;
   vm_ip?: string;

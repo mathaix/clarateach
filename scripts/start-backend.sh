@@ -19,7 +19,7 @@ export AUTH_DISABLED="${AUTH_DISABLED:-true}"
 export PORT="${PORT:-8080}"
 
 # Firecracker provisioner config
-export FC_SNAPSHOT_NAME="${FC_SNAPSHOT_NAME:-clara2-snapshot-2}"
+export FC_SNAPSHOT_NAME="${FC_SNAPSHOT_NAME:-clarateach-agent-20260116-204056}"
 
 echo "Starting backend on port $PORT..."
 echo "  GCP_PROJECT=$GCP_PROJECT"

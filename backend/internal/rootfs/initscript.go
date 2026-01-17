@@ -59,6 +59,8 @@ export PATH="/home/learner/.local/bin:/home/learner/.npm-global/bin:/usr/local/s
 export WORKSPACE_DIR=/workspace
 export TERM=xterm-256color
 export NODE_ENV=production
+export MICROVM_MODE=true
+export AUTH_DISABLED=true
 
 # Create workspace directory if it doesn't exist
 mkdir -p /workspace
