@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/clarateach/backend/internal/api"
 	"github.com/clarateach/backend/internal/provisioner"
@@ -77,10 +78,26 @@ func main() {
 	}
 
 	// 5. CORS Middleware
+	// CORS_ORIGINS: comma-separated list (e.g., "https://learn.claramap.com,http://localhost:5173")
+	// Defaults to "*" for development
+	corsOrigins := os.Getenv("CORS_ORIGINS")
+	var allowedOrigins []string
+	if corsOrigins == "" || corsOrigins == "*" {
+		allowedOrigins = []string{"*"}
+	} else {
+		allowedOrigins = strings.Split(corsOrigins, ",")
+		for i, origin := range allowedOrigins {
+			allowedOrigins[i] = strings.TrimSpace(origin)
+		}
+	}
+	log.Printf("CORS allowed origins: %v", allowedOrigins)
+
 	corsHandler := cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowedOrigins:   allowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowCredentials: true,
+		MaxAge:           300,
 	})
 
 	// 6. Root Handler

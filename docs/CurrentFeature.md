@@ -113,8 +113,9 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 - [x] Append token to WebSocket URL
 
 ### Phase 5: Security Hardening
-- [ ] Remove firewall rule for port 9090
-- [ ] Restrict CORS to `learn.claramap.com`
+- [ ] **Deploy**: Remove GCP firewall rule for port 9090
+- [x] Add `CORS_ORIGINS` env var (comma-separated list, default: `*`)
+- [ ] **Deploy**: Set `CORS_ORIGINS=https://learn.claramap.com` in production
 
 ## Files Reference
 
