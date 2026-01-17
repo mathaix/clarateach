@@ -27,6 +27,7 @@ type Server struct {
 	gcpFirecrackerProvisioner *provisioner.GCPFirecrackerProvider    // GCP + Firecracker
 	useSpotVMs                bool
 	authDisabled              bool
+	fcSnapshotName            string // Firecracker snapshot name for visibility
 }
 
 func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool, authDisabled bool) *Server {
@@ -52,9 +53,10 @@ func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool,
 }
 
 // SetGCPFirecrackerProvisioner sets the GCP Firecracker provisioner
-func (s *Server) SetGCPFirecrackerProvisioner(prov *provisioner.GCPFirecrackerProvider) {
+func (s *Server) SetGCPFirecrackerProvisioner(prov *provisioner.GCPFirecrackerProvider, snapshotName string) {
 	s.gcpFirecrackerProvisioner = prov
-	log.Printf("GCP Firecracker provisioner initialized")
+	s.fcSnapshotName = snapshotName
+	log.Printf("GCP Firecracker provisioner initialized with snapshot: %s", snapshotName)
 }
 
 // getProvisioner returns the appropriate provisioner based on runtime type
@@ -87,7 +89,13 @@ func (s *Server) routes() {
 	}))
 
 	s.router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		resp := map[string]interface{}{
+			"status": "ok",
+		}
+		if s.fcSnapshotName != "" {
+			resp["fc_snapshot"] = s.fcSnapshotName
+		}
+		json.NewEncoder(w).Encode(resp)
 	})
 
 	s.router.Route("/api", func(r chi.Router) {

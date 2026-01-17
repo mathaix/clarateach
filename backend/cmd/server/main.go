@@ -74,7 +74,7 @@ func main() {
 			BackendURL:           backendURL,
 			WorkspaceTokenSecret: workspaceTokenSecret,
 		})
-		apiServer.SetGCPFirecrackerProvisioner(fcProvisioner)
+		apiServer.SetGCPFirecrackerProvisioner(fcProvisioner, fcSnapshotName)
 	}
 
 	// 5. CORS Middleware
