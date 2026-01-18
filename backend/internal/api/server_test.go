@@ -98,8 +98,8 @@ func setupTestServer(t *testing.T) (*Server, func()) {
 	s := store.NewSQLiteStore(db)
 	mockProv := NewMockProvisioner()
 
-	// Create server with auth disabled for most tests
-	server := NewServer(s, mockProv, false, true) // authDisabled = true
+	// Create server (auth is always enabled)
+	server := NewServer(s, mockProv, false)
 
 	cleanup := func() {
 		db.Close()
@@ -110,7 +110,7 @@ func setupTestServer(t *testing.T) (*Server, func()) {
 }
 
 // setupTestServerWithMock returns the server, store, mock provisioner, and cleanup func
-func setupTestServerWithMock(t *testing.T, authDisabled bool) (*Server, *store.SQLiteStore, *MockProvisioner, func()) {
+func setupTestServerWithMock(t *testing.T) (*Server, *store.SQLiteStore, *MockProvisioner, func()) {
 	t.Helper()
 
 	tmpFile, err := os.CreateTemp("", "clarateach_test_*.db")
@@ -128,7 +128,7 @@ func setupTestServerWithMock(t *testing.T, authDisabled bool) (*Server, *store.S
 	s := store.NewSQLiteStore(db)
 	mockProv := NewMockProvisioner()
 
-	server := NewServer(s, mockProv, false, authDisabled)
+	server := NewServer(s, mockProv, false)
 
 	cleanup := func() {
 		db.Close()
@@ -156,8 +156,8 @@ func setupTestServerWithAuth(t *testing.T) (*Server, *store.SQLiteStore, func())
 	s := store.NewSQLiteStore(db)
 	mockProv := NewMockProvisioner()
 
-	// Create server with auth enabled
-	server := NewServer(s, mockProv, false, false) // authDisabled = false
+	// Create server (auth is always enabled)
+	server := NewServer(s, mockProv, false)
 
 	cleanup := func() {
 		db.Close()
@@ -165,6 +165,54 @@ func setupTestServerWithAuth(t *testing.T) (*Server, *store.SQLiteStore, func())
 	}
 
 	return server, s, cleanup
+}
+
+// createTestUserToken creates a test user and returns a JWT token for authentication
+func createTestUserToken(t *testing.T, server *Server, email string) string {
+	t.Helper()
+
+	regBody := map[string]string{
+		"email":    email,
+		"password": "password123",
+		"name":     "Test User",
+	}
+	regBytes, _ := json.Marshal(regBody)
+	regReq := httptest.NewRequest("POST", "/api/auth/register", bytes.NewReader(regBytes))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRr := httptest.NewRecorder()
+	server.router.ServeHTTP(regRr, regReq)
+
+	if regRr.Code != http.StatusOK {
+		t.Fatalf("Failed to create test user: %d - %s", regRr.Code, regRr.Body.String())
+	}
+
+	var regResponse map[string]interface{}
+	json.Unmarshal(regRr.Body.Bytes(), &regResponse)
+	return regResponse["token"].(string)
+}
+
+// createTestAdminToken creates an admin user and returns a JWT token for authentication
+func createTestAdminToken(t *testing.T, s store.Store, email string) string {
+	t.Helper()
+
+	hash, _ := auth.HashPassword("password123")
+	admin := &store.User{
+		ID:           "admin-" + email,
+		Email:        email,
+		PasswordHash: hash,
+		Name:         "Test Admin",
+		Role:         "admin",
+		CreatedAt:    time.Now(),
+	}
+	if err := s.CreateUser(admin); err != nil {
+		t.Fatalf("Failed to create admin user: %v", err)
+	}
+
+	token, err := auth.GenerateToken(admin)
+	if err != nil {
+		t.Fatalf("Failed to generate admin token: %v", err)
+	}
+	return token
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -368,8 +416,28 @@ func TestAuthMe(t *testing.T) {
 }
 
 func TestWorkshopCRUD(t *testing.T) {
-	server, cleanup := setupTestServer(t)
+	server, _, cleanup := setupTestServerWithAuth(t)
 	defer cleanup()
+
+	// First register a user to get an auth token
+	regBody := map[string]string{
+		"email":    "workshop-crud@example.com",
+		"password": "password123",
+		"name":     "Workshop CRUD User",
+	}
+	regBytes, _ := json.Marshal(regBody)
+	regReq := httptest.NewRequest("POST", "/api/auth/register", bytes.NewReader(regBytes))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRr := httptest.NewRecorder()
+	server.router.ServeHTTP(regRr, regReq)
+
+	if regRr.Code != http.StatusOK {
+		t.Fatalf("User registration failed: %d - %s", regRr.Code, regRr.Body.String())
+	}
+
+	var regResponse map[string]interface{}
+	json.Unmarshal(regRr.Body.Bytes(), &regResponse)
+	token := regResponse["token"].(string)
 
 	// Create workshop
 	createBody := map[string]interface{}{
@@ -381,6 +449,7 @@ func TestWorkshopCRUD(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/workshops", bytes.NewReader(createBytes))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -408,6 +477,7 @@ func TestWorkshopCRUD(t *testing.T) {
 
 	// List workshops
 	listReq := httptest.NewRequest("GET", "/api/workshops", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
 	listRr := httptest.NewRecorder()
 	server.router.ServeHTTP(listRr, listReq)
 
@@ -425,6 +495,7 @@ func TestWorkshopCRUD(t *testing.T) {
 
 	// Get workshop by ID
 	getReq := httptest.NewRequest("GET", "/api/workshops/"+workshopID, nil)
+	getReq.Header.Set("Authorization", "Bearer "+token)
 	getRr := httptest.NewRecorder()
 	server.router.ServeHTTP(getRr, getReq)
 
@@ -439,6 +510,7 @@ func TestWorkshopCRUD(t *testing.T) {
 
 	// Delete workshop (async - sets status to "deleting" immediately)
 	delReq := httptest.NewRequest("DELETE", "/api/workshops/"+workshopID, nil)
+	delReq.Header.Set("Authorization", "Bearer "+token)
 	delRr := httptest.NewRecorder()
 	server.router.ServeHTTP(delRr, delReq)
 
@@ -451,6 +523,7 @@ func TestWorkshopCRUD(t *testing.T) {
 
 	// Verify deleted (soft delete - workshop still exists but with "deleted" status)
 	listReq2 := httptest.NewRequest("GET", "/api/workshops", nil)
+	listReq2.Header.Set("Authorization", "Bearer "+token)
 	listRr2 := httptest.NewRecorder()
 	server.router.ServeHTTP(listRr2, listReq2)
 
@@ -471,10 +544,30 @@ func TestWorkshopCRUD(t *testing.T) {
 }
 
 func TestRegistrationFlow(t *testing.T) {
-	server, cleanup := setupTestServer(t)
+	server, _, cleanup := setupTestServerWithAuth(t)
 	defer cleanup()
 
-	// Create workshop first
+	// First register a user to get an auth token
+	regBody := map[string]string{
+		"email":    "reg-flow@example.com",
+		"password": "password123",
+		"name":     "Registration Flow User",
+	}
+	regBytes, _ := json.Marshal(regBody)
+	regReq := httptest.NewRequest("POST", "/api/auth/register", bytes.NewReader(regBytes))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRr := httptest.NewRecorder()
+	server.router.ServeHTTP(regRr, regReq)
+
+	if regRr.Code != http.StatusOK {
+		t.Fatalf("User registration failed: %d - %s", regRr.Code, regRr.Body.String())
+	}
+
+	var authResponse map[string]interface{}
+	json.Unmarshal(regRr.Body.Bytes(), &authResponse)
+	token := authResponse["token"].(string)
+
+	// Create workshop first (with auth)
 	createBody := map[string]interface{}{
 		"name":    "Registration Test Workshop",
 		"seats":   5,
@@ -484,8 +577,13 @@ func TestRegistrationFlow(t *testing.T) {
 
 	createReq := httptest.NewRequest("POST", "/api/workshops", bytes.NewReader(createBytes))
 	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
 	createRr := httptest.NewRecorder()
 	server.router.ServeHTTP(createRr, createReq)
+
+	if createRr.Code != http.StatusOK {
+		t.Fatalf("Workshop creation failed: %d - %s", createRr.Code, createRr.Body.String())
+	}
 
 	var createResponse map[string]interface{}
 	json.Unmarshal(createRr.Body.Bytes(), &createResponse)
@@ -495,41 +593,41 @@ func TestRegistrationFlow(t *testing.T) {
 	// Wait for async provisioning to complete
 	time.Sleep(100 * time.Millisecond)
 
-	// Register for workshop
-	regBody := map[string]interface{}{
+	// Register learner for workshop
+	learnerRegBody := map[string]interface{}{
 		"workshop_code": workshopCode,
 		"email":         "learner@example.com",
 		"name":          "Test Learner",
 	}
-	regBytes, _ := json.Marshal(regBody)
+	learnerRegBytes, _ := json.Marshal(learnerRegBody)
 
-	regReq := httptest.NewRequest("POST", "/api/register", bytes.NewReader(regBytes))
-	regReq.Header.Set("Content-Type", "application/json")
-	regRr := httptest.NewRecorder()
-	server.router.ServeHTTP(regRr, regReq)
+	learnerRegReq := httptest.NewRequest("POST", "/api/register", bytes.NewReader(learnerRegBytes))
+	learnerRegReq.Header.Set("Content-Type", "application/json")
+	learnerRegRr := httptest.NewRecorder()
+	server.router.ServeHTTP(learnerRegRr, learnerRegReq)
 
-	if regRr.Code != http.StatusOK {
-		t.Fatalf("Register returned %d, want %d. Body: %s", regRr.Code, http.StatusOK, regRr.Body.String())
+	if learnerRegRr.Code != http.StatusOK {
+		t.Fatalf("Register returned %d, want %d. Body: %s", learnerRegRr.Code, http.StatusOK, learnerRegRr.Body.String())
 	}
 
-	var regResponse map[string]interface{}
-	json.Unmarshal(regRr.Body.Bytes(), &regResponse)
+	var learnerRegResponse map[string]interface{}
+	json.Unmarshal(learnerRegRr.Body.Bytes(), &learnerRegResponse)
 
-	accessCode := regResponse["access_code"].(string)
+	accessCode := learnerRegResponse["access_code"].(string)
 	if accessCode == "" {
 		t.Error("Registration did not return access code")
 	}
 
 	// Check that registering again returns already_registered
-	regReq2 := httptest.NewRequest("POST", "/api/register", bytes.NewReader(regBytes))
-	regReq2.Header.Set("Content-Type", "application/json")
-	regRr2 := httptest.NewRecorder()
-	server.router.ServeHTTP(regRr2, regReq2)
+	learnerRegReq2 := httptest.NewRequest("POST", "/api/register", bytes.NewReader(learnerRegBytes))
+	learnerRegReq2.Header.Set("Content-Type", "application/json")
+	learnerRegRr2 := httptest.NewRecorder()
+	server.router.ServeHTTP(learnerRegRr2, learnerRegReq2)
 
-	var regResponse2 map[string]interface{}
-	json.Unmarshal(regRr2.Body.Bytes(), &regResponse2)
+	var learnerRegResponse2 map[string]interface{}
+	json.Unmarshal(learnerRegRr2.Body.Bytes(), &learnerRegResponse2)
 
-	if regResponse2["already_registered"] != true {
+	if learnerRegResponse2["already_registered"] != true {
 		t.Error("Second registration should return already_registered: true")
 	}
 
@@ -949,8 +1047,11 @@ func TestFullLearnerJourneyWithAuth(t *testing.T) {
 // Tests for error handling when provisioner fails
 
 func TestWorkshopCreationProvisionerFailure(t *testing.T) {
-	server, s, mockProv, cleanup := setupTestServerWithMock(t, true)
+	server, s, mockProv, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create auth token
+	token := createTestUserToken(t, server, "prov-fail@example.com")
 
 	// Simulate provisioner failure
 	mockProv.CreateVMError = errors.New("GCP quota exceeded")
@@ -964,6 +1065,7 @@ func TestWorkshopCreationProvisionerFailure(t *testing.T) {
 
 	req := httptest.NewRequest("POST", "/api/workshops", bytes.NewReader(createBytes))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -996,8 +1098,11 @@ func TestWorkshopCreationProvisionerFailure(t *testing.T) {
 }
 
 func TestWorkshopStartProvisionerFailure(t *testing.T) {
-	server, s, mockProv, cleanup := setupTestServerWithMock(t, true)
+	server, s, mockProv, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create auth token
+	token := createTestUserToken(t, server, "start-fail@example.com")
 
 	// Create a workshop without starting it (manually insert)
 	workshop := &store.Workshop{
@@ -1015,6 +1120,7 @@ func TestWorkshopStartProvisionerFailure(t *testing.T) {
 	mockProv.CreateVMError = errors.New("VM creation failed")
 
 	req := httptest.NewRequest("POST", "/api/workshops/ws-test-start/start", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1024,8 +1130,11 @@ func TestWorkshopStartProvisionerFailure(t *testing.T) {
 }
 
 func TestWorkshopDeleteProvisionerFailureContinues(t *testing.T) {
-	server, s, mockProv, cleanup := setupTestServerWithMock(t, true)
+	server, s, mockProv, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create auth token
+	token := createTestUserToken(t, server, "delete-fail@example.com")
 
 	// Create and start a workshop
 	createBody := map[string]interface{}{
@@ -1037,6 +1146,7 @@ func TestWorkshopDeleteProvisionerFailureContinues(t *testing.T) {
 
 	createReq := httptest.NewRequest("POST", "/api/workshops", bytes.NewReader(createBytes))
 	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
 	createRr := httptest.NewRecorder()
 	server.router.ServeHTTP(createRr, createReq)
 
@@ -1053,6 +1163,7 @@ func TestWorkshopDeleteProvisionerFailureContinues(t *testing.T) {
 
 	// Delete should still succeed (returns 200 with "deleting" status)
 	delReq := httptest.NewRequest("DELETE", "/api/workshops/"+workshopID, nil)
+	delReq.Header.Set("Authorization", "Bearer "+token)
 	delRr := httptest.NewRecorder()
 	server.router.ServeHTTP(delRr, delReq)
 
@@ -1075,8 +1186,11 @@ func TestWorkshopDeleteProvisionerFailureContinues(t *testing.T) {
 // ================== Start Workshop Tests ==================
 
 func TestStartWorkshopSuccess(t *testing.T) {
-	server, s, mockProv, cleanup := setupTestServerWithMock(t, true)
+	server, s, mockProv, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create auth token
+	token := createTestUserToken(t, server, "start-success@example.com")
 
 	// Create a workshop in "created" status
 	workshop := &store.Workshop{
@@ -1091,6 +1205,7 @@ func TestStartWorkshopSuccess(t *testing.T) {
 	s.CreateWorkshop(workshop)
 
 	req := httptest.NewRequest("POST", "/api/workshops/ws-start-test/start", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1123,10 +1238,14 @@ func TestStartWorkshopSuccess(t *testing.T) {
 }
 
 func TestStartWorkshopNotFound(t *testing.T) {
-	server, _, _, cleanup := setupTestServerWithMock(t, true)
+	server, _, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
+	// Create auth token
+	token := createTestUserToken(t, server, "start-notfound@example.com")
+
 	req := httptest.NewRequest("POST", "/api/workshops/nonexistent/start", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1138,7 +1257,7 @@ func TestStartWorkshopNotFound(t *testing.T) {
 // ================== Join Workshop Tests ==================
 
 func TestJoinWorkshopSuccess(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
 	// Create a running workshop with VM
@@ -1211,7 +1330,7 @@ func TestJoinWorkshopSuccess(t *testing.T) {
 }
 
 func TestJoinWorkshopNotFound(t *testing.T) {
-	server, _, _, cleanup := setupTestServerWithMock(t, true)
+	server, _, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
 	joinBody := map[string]interface{}{
@@ -1231,7 +1350,7 @@ func TestJoinWorkshopNotFound(t *testing.T) {
 }
 
 func TestJoinWorkshopFull(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
 	// Create a workshop with all seats taken
@@ -1291,8 +1410,11 @@ func TestJoinWorkshopFull(t *testing.T) {
 // ================== Admin Endpoints Tests ==================
 
 func TestAdminOverview(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true) // auth disabled for simplicity
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create admin token
+	adminToken := createTestAdminToken(t, s, "admin-overview@example.com")
 
 	// Create some workshops
 	for i := 0; i < 3; i++ {
@@ -1309,6 +1431,7 @@ func TestAdminOverview(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("GET", "/api/admin/overview", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1331,8 +1454,11 @@ func TestAdminOverview(t *testing.T) {
 }
 
 func TestAdminListVMs(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create admin token
+	adminToken := createTestAdminToken(t, s, "admin-listvms@example.com")
 
 	// Create a workshop with VM
 	workshop := &store.Workshop{
@@ -1363,6 +1489,7 @@ func TestAdminListVMs(t *testing.T) {
 	s.CreateVM(vm)
 
 	req := httptest.NewRequest("GET", "/api/admin/vms", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1390,8 +1517,11 @@ func TestAdminListVMs(t *testing.T) {
 }
 
 func TestAdminGetVMDetails(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
+
+	// Create admin token
+	adminToken := createTestAdminToken(t, s, "admin-vmdetails@example.com")
 
 	workshop := &store.Workshop{
 		ID:        "ws-vm-details",
@@ -1418,6 +1548,7 @@ func TestAdminGetVMDetails(t *testing.T) {
 	s.CreateVM(vm)
 
 	req := httptest.NewRequest("GET", "/api/admin/vms/ws-vm-details", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1440,10 +1571,14 @@ func TestAdminGetVMDetails(t *testing.T) {
 }
 
 func TestAdminGetVMDetailsNotFound(t *testing.T) {
-	server, _, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
+	// Create admin token
+	adminToken := createTestAdminToken(t, s, "admin-vmnotfound@example.com")
+
 	req := httptest.NewRequest("GET", "/api/admin/vms/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1453,10 +1588,13 @@ func TestAdminGetVMDetailsNotFound(t *testing.T) {
 }
 
 func TestAdminListUsers(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
-	// Create some users
+	// Create admin token first
+	adminToken := createTestAdminToken(t, s, "admin-listusers@example.com")
+
+	// Create some additional users
 	hash, _ := auth.HashPassword("password123")
 	for i := 0; i < 2; i++ {
 		user := &store.User{
@@ -1471,6 +1609,7 @@ func TestAdminListUsers(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("GET", "/api/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	rr := httptest.NewRecorder()
 	server.router.ServeHTTP(rr, req)
 
@@ -1482,15 +1621,16 @@ func TestAdminListUsers(t *testing.T) {
 	json.Unmarshal(rr.Body.Bytes(), &response)
 
 	users := response["users"].([]interface{})
-	if len(users) != 2 {
-		t.Errorf("Expected 2 users, got %d", len(users))
+	// 3 users: 1 admin (created for token) + 2 instructors
+	if len(users) != 3 {
+		t.Errorf("Expected 3 users (1 admin + 2 instructors), got %d", len(users))
 	}
 }
 
 // ================== Registration Edge Cases ==================
 
 func TestRegistrationWorkshopFull(t *testing.T) {
-	server, s, _, cleanup := setupTestServerWithMock(t, true)
+	server, s, _, cleanup := setupTestServerWithMock(t)
 	defer cleanup()
 
 	// Create a workshop with 1 seat

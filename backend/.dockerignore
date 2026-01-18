@@ -1,0 +1,35 @@
+# Binaries
+server
+agent-linux
+clarateach-backend
+vmctl
+*.exe
+
+# Database files
+*.db
+
+# Environment files (secrets should come from env vars)
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test files
+*_test.go
+
+# Documentation
+README.md
+RELEASE.md
+docs/
+
+# Git
+.git/
+.gitignore
+
+# Build artifacts
+vendor/

@@ -86,19 +86,20 @@ func (p *GCPFirecrackerProvider) CreateVM(ctx context.Context, cfg VMConfig) (*V
 		return nil, fmt.Errorf("failed to create GCP VM: %w", err)
 	}
 
+	vmName := p.vmName(cfg.WorkshopID)
+
 	// Step 2: Wait for agent to be healthy
 	agentURL := fmt.Sprintf("http://%s:%d", vm.ExternalIP, p.agentPort)
 	if err := p.waitForAgentHealth(ctx, agentURL, 2*time.Minute); err != nil {
-		// Cleanup: delete the VM if agent never becomes healthy
-		_ = p.deleteGCPVM(ctx, cfg.WorkshopID)
-		return nil, fmt.Errorf("agent health check failed: %w", err)
+		// Don't delete VM on failure - keep it for debugging
+		// Check serial console: gcloud compute instances get-serial-port-output %s --zone=%s
+		return nil, fmt.Errorf("agent health check failed (VM %s kept for debugging): %w", vmName, err)
 	}
 
 	// Step 3: Create MicroVMs for each seat
 	if err := p.createMicroVMs(ctx, agentURL, cfg.WorkshopID, cfg.Seats); err != nil {
-		// Cleanup: delete the VM if MicroVM creation fails
-		_ = p.deleteGCPVM(ctx, cfg.WorkshopID)
-		return nil, fmt.Errorf("failed to create MicroVMs: %w", err)
+		// Don't delete VM on failure - keep it for debugging
+		return nil, fmt.Errorf("failed to create MicroVMs (VM %s kept for debugging): %w", vmName, err)
 	}
 
 	return vm, nil

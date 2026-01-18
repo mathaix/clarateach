@@ -1,109 +1,29 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-type SQLiteStore struct {
+type PostgresStore struct {
 	db *sql.DB
 }
 
-func NewSQLiteStore(db *sql.DB) *SQLiteStore {
-	return &SQLiteStore{db: db}
+func NewPostgresStore(db *sql.DB) *PostgresStore {
+	return &PostgresStore{db: db}
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS users (
-	id TEXT PRIMARY KEY,
-	email TEXT NOT NULL UNIQUE,
-	password_hash TEXT NOT NULL,
-	name TEXT NOT NULL,
-	role TEXT NOT NULL DEFAULT 'instructor',
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
-CREATE TABLE IF NOT EXISTS workshops (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	code TEXT NOT NULL UNIQUE,
-	seats INTEGER NOT NULL,
-	api_key TEXT NOT NULL,
-	runtime_type TEXT NOT NULL DEFAULT 'docker',
-	status TEXT NOT NULL,
-	owner_id TEXT,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY(owner_id) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-	odehash TEXT PRIMARY KEY,
-	workshop_id TEXT NOT NULL,
-	seat_id INTEGER NOT NULL,
-	name TEXT,
-	status TEXT DEFAULT 'provisioning',
-	container_id TEXT,
-	ip TEXT,
-	joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY(workshop_id) REFERENCES workshops(id),
-	UNIQUE(workshop_id, seat_id)
-);
-
-CREATE TABLE IF NOT EXISTS workshop_vms (
-	id TEXT PRIMARY KEY,
-	workshop_id TEXT NOT NULL,
-	vm_name TEXT NOT NULL,
-	vm_id TEXT,
-	zone TEXT NOT NULL,
-	machine_type TEXT NOT NULL,
-	external_ip TEXT,
-	internal_ip TEXT,
-	tunnel_url TEXT,
-	status TEXT NOT NULL DEFAULT 'provisioning',
-	ssh_public_key TEXT,
-	ssh_private_key TEXT,
-	ssh_user TEXT DEFAULT 'clarateach',
-	provisioning_started_at DATETIME,
-	provisioning_completed_at DATETIME,
-	provisioning_duration_ms INTEGER DEFAULT 0,
-	removed_at DATETIME,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY(workshop_id) REFERENCES workshops(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_workshop_vms_workshop_id ON workshop_vms(workshop_id);
-CREATE INDEX IF NOT EXISTS idx_workshop_vms_status ON workshop_vms(status);
-
-CREATE TABLE IF NOT EXISTS registrations (
-	id TEXT PRIMARY KEY,
-	access_code TEXT NOT NULL UNIQUE,
-	email TEXT NOT NULL,
-	name TEXT NOT NULL,
-	workshop_id TEXT NOT NULL,
-	seat_id INTEGER,
-	status TEXT NOT NULL DEFAULT 'registered',
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	joined_at DATETIME,
-	FOREIGN KEY(workshop_id) REFERENCES workshops(id),
-	UNIQUE(workshop_id, email)
-);
-
-CREATE INDEX IF NOT EXISTS idx_registrations_access_code ON registrations(access_code);
-CREATE INDEX IF NOT EXISTS idx_registrations_workshop_id ON registrations(workshop_id);
-`
-
-// InitDB initializes a SQLite database (for testing/local development)
-func InitDB(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+// InitPostgresDB initializes a PostgreSQL database connection
+func InitPostgresDB(databaseURL string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := db.Exec(schema); err != nil {
+	// Test the connection
+	if err := db.PingContext(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -112,15 +32,15 @@ func InitDB(dbPath string) (*sql.DB, error) {
 
 // -- User Operations --
 
-func (s *SQLiteStore) CreateUser(u *User) error {
-	query := `INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+func (s *PostgresStore) CreateUser(u *User) error {
+	query := `INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
 	_, err := s.db.Exec(query, u.ID, u.Email, u.PasswordHash, u.Name, u.Role, u.CreatedAt)
 	return err
 }
 
-func (s *SQLiteStore) GetUser(id string) (*User, error) {
+func (s *PostgresStore) GetUser(id string) (*User, error) {
 	u := &User{}
-	query := `SELECT id, email, password_hash, name, role, created_at FROM users WHERE id = ?`
+	query := `SELECT id, email, password_hash, name, role, created_at FROM users WHERE id = $1`
 	err := s.db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.Role, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -128,9 +48,9 @@ func (s *SQLiteStore) GetUser(id string) (*User, error) {
 	return u, err
 }
 
-func (s *SQLiteStore) GetUserByEmail(email string) (*User, error) {
+func (s *PostgresStore) GetUserByEmail(email string) (*User, error) {
 	u := &User{}
-	query := `SELECT id, email, password_hash, name, role, created_at FROM users WHERE email = ?`
+	query := `SELECT id, email, password_hash, name, role, created_at FROM users WHERE email = $1`
 	err := s.db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Name, &u.Role, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -138,7 +58,7 @@ func (s *SQLiteStore) GetUserByEmail(email string) (*User, error) {
 	return u, err
 }
 
-func (s *SQLiteStore) ListUsers() ([]*User, error) {
+func (s *PostgresStore) ListUsers() ([]*User, error) {
 	query := `SELECT id, email, password_hash, name, role, created_at FROM users ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -159,25 +79,30 @@ func (s *SQLiteStore) ListUsers() ([]*User, error) {
 
 // -- Workshop Operations --
 
-func (s *SQLiteStore) CreateWorkshop(w *Workshop) error {
-	query := `INSERT INTO workshops (id, name, code, seats, api_key, runtime_type, status, owner_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.Exec(query, w.ID, w.Name, w.Code, w.Seats, w.ApiKey, w.RuntimeType, w.Status, w.OwnerID, w.CreatedAt)
+func (s *PostgresStore) CreateWorkshop(w *Workshop) error {
+	query := `INSERT INTO workshops (id, name, code, seats, api_key, runtime_type, status, owner_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	// Convert empty owner_id to NULL for foreign key constraint
+	var ownerID interface{} = w.OwnerID
+	if w.OwnerID == "" {
+		ownerID = nil
+	}
+	_, err := s.db.Exec(query, w.ID, w.Name, w.Code, w.Seats, w.ApiKey, w.RuntimeType, w.Status, ownerID, w.CreatedAt)
 	return err
 }
 
-func (s *SQLiteStore) GetWorkshop(id string) (*Workshop, error) {
+func (s *PostgresStore) GetWorkshop(id string) (*Workshop, error) {
 	w := &Workshop{}
-	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE id = ?`
+	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE id = $1`
 	err := s.db.QueryRow(query, id).Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.RuntimeType, &w.Status, &w.OwnerID, &w.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, nil // Not found
 	}
 	return w, err
 }
 
-func (s *SQLiteStore) GetWorkshopByCode(code string) (*Workshop, error) {
+func (s *PostgresStore) GetWorkshopByCode(code string) (*Workshop, error) {
 	w := &Workshop{}
-	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE code = ?`
+	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE code = $1`
 	err := s.db.QueryRow(query, code).Scan(&w.ID, &w.Name, &w.Code, &w.Seats, &w.ApiKey, &w.RuntimeType, &w.Status, &w.OwnerID, &w.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -185,7 +110,7 @@ func (s *SQLiteStore) GetWorkshopByCode(code string) (*Workshop, error) {
 	return w, err
 }
 
-func (s *SQLiteStore) ListWorkshops() ([]*Workshop, error) {
+func (s *PostgresStore) ListWorkshops() ([]*Workshop, error) {
 	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -204,8 +129,8 @@ func (s *SQLiteStore) ListWorkshops() ([]*Workshop, error) {
 	return workshops, nil
 }
 
-func (s *SQLiteStore) ListWorkshopsByOwner(ownerID string) ([]*Workshop, error) {
-	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE owner_id = ? ORDER BY created_at DESC`
+func (s *PostgresStore) ListWorkshopsByOwner(ownerID string) ([]*Workshop, error) {
+	query := `SELECT id, name, code, seats, api_key, runtime_type, status, COALESCE(owner_id, ''), created_at FROM workshops WHERE owner_id = $1 ORDER BY created_at DESC`
 	rows, err := s.db.Query(query, ownerID)
 	if err != nil {
 		return nil, err
@@ -223,38 +148,39 @@ func (s *SQLiteStore) ListWorkshopsByOwner(ownerID string) ([]*Workshop, error) 
 	return workshops, nil
 }
 
-func (s *SQLiteStore) UpdateWorkshopStatus(id string, status string) error {
-	query := `UPDATE workshops SET status = ? WHERE id = ?`
+func (s *PostgresStore) UpdateWorkshopStatus(id string, status string) error {
+	query := `UPDATE workshops SET status = $1 WHERE id = $2`
 	_, err := s.db.Exec(query, status, id)
 	return err
 }
 
-func (s *SQLiteStore) DeleteWorkshop(id string) error {
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE workshop_id = ?`, id)
+func (s *PostgresStore) DeleteWorkshop(id string) error {
+	// First delete related sessions
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE workshop_id = $1`, id)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`DELETE FROM workshops WHERE id = ?`, id)
+	_, err = s.db.Exec(`DELETE FROM workshops WHERE id = $1`, id)
 	return err
 }
 
 // -- Session Operations --
 
-func (s *SQLiteStore) CreateSession(session *Session) error {
-	query := `INSERT INTO sessions (odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+func (s *PostgresStore) CreateSession(session *Session) error {
+	query := `INSERT INTO sessions (odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := s.db.Exec(query, session.OdeHash, session.WorkshopID, session.SeatID, session.Name, session.Status, session.ContainerID, session.IP, session.JoinedAt)
 	return err
 }
 
-func (s *SQLiteStore) UpdateSession(session *Session) error {
-	query := `UPDATE sessions SET name = ?, status = ?, container_id = ?, ip = ? WHERE odehash = ?`
+func (s *PostgresStore) UpdateSession(session *Session) error {
+	query := `UPDATE sessions SET name = $1, status = $2, container_id = $3, ip = $4 WHERE odehash = $5`
 	_, err := s.db.Exec(query, session.Name, session.Status, session.ContainerID, session.IP, session.OdeHash)
 	return err
 }
 
-func (s *SQLiteStore) GetSession(odehash string) (*Session, error) {
+func (s *PostgresStore) GetSession(odehash string) (*Session, error) {
 	sess := &Session{}
-	query := `SELECT odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at FROM sessions WHERE odehash = ?`
+	query := `SELECT odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at FROM sessions WHERE odehash = $1`
 	err := s.db.QueryRow(query, odehash).Scan(&sess.OdeHash, &sess.WorkshopID, &sess.SeatID, &sess.Name, &sess.Status, &sess.ContainerID, &sess.IP, &sess.JoinedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -262,9 +188,9 @@ func (s *SQLiteStore) GetSession(odehash string) (*Session, error) {
 	return sess, err
 }
 
-func (s *SQLiteStore) GetSessionBySeat(workshopID string, seatID int) (*Session, error) {
+func (s *PostgresStore) GetSessionBySeat(workshopID string, seatID int) (*Session, error) {
 	sess := &Session{}
-	query := `SELECT odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at FROM sessions WHERE workshop_id = ? AND seat_id = ?`
+	query := `SELECT odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at FROM sessions WHERE workshop_id = $1 AND seat_id = $2`
 	err := s.db.QueryRow(query, workshopID, seatID).Scan(&sess.OdeHash, &sess.WorkshopID, &sess.SeatID, &sess.Name, &sess.Status, &sess.ContainerID, &sess.IP, &sess.JoinedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -272,8 +198,8 @@ func (s *SQLiteStore) GetSessionBySeat(workshopID string, seatID int) (*Session,
 	return sess, err
 }
 
-func (s *SQLiteStore) ListSessions(workshopID string) ([]*Session, error) {
-	query := `SELECT odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at FROM sessions WHERE workshop_id = ?`
+func (s *PostgresStore) ListSessions(workshopID string) ([]*Session, error) {
+	query := `SELECT odehash, workshop_id, seat_id, name, status, container_id, ip, joined_at FROM sessions WHERE workshop_id = $1`
 	rows, err := s.db.Query(query, workshopID)
 	if err != nil {
 		return nil, err
@@ -293,9 +219,9 @@ func (s *SQLiteStore) ListSessions(workshopID string) ([]*Session, error) {
 
 // -- VM Operations --
 
-func (s *SQLiteStore) CreateVM(vm *WorkshopVM) error {
+func (s *PostgresStore) CreateVM(vm *WorkshopVM) error {
 	query := `INSERT INTO workshop_vms (id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, tunnel_url, status, ssh_public_key, ssh_private_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
 	_, err := s.db.Exec(query, vm.ID, vm.WorkshopID, vm.VMName, vm.VMID, vm.Zone, vm.MachineType,
 		vm.ExternalIP, vm.InternalIP, vm.TunnelURL, vm.Status, vm.SSHPublicKey, vm.SSHPrivateKey, vm.SSHUser,
 		vm.ProvisioningStartedAt, vm.ProvisioningCompletedAt, vm.ProvisioningDurationMs, vm.RemovedAt,
@@ -303,10 +229,10 @@ func (s *SQLiteStore) CreateVM(vm *WorkshopVM) error {
 	return err
 }
 
-func (s *SQLiteStore) GetVM(workshopID string) (*WorkshopVM, error) {
+func (s *PostgresStore) GetVM(workshopID string) (*WorkshopVM, error) {
 	vm := &WorkshopVM{}
 	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
-			  FROM workshop_vms WHERE workshop_id = ? AND removed_at IS NULL ORDER BY created_at DESC LIMIT 1`
+			  FROM workshop_vms WHERE workshop_id = $1 AND removed_at IS NULL ORDER BY created_at DESC LIMIT 1`
 	err := s.db.QueryRow(query, workshopID).Scan(
 		&vm.ID, &vm.WorkshopID, &vm.VMName, &vm.VMID, &vm.Zone, &vm.MachineType,
 		&vm.ExternalIP, &vm.InternalIP, &vm.TunnelURL, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
@@ -318,10 +244,10 @@ func (s *SQLiteStore) GetVM(workshopID string) (*WorkshopVM, error) {
 	return vm, err
 }
 
-func (s *SQLiteStore) GetVMByID(id string) (*WorkshopVM, error) {
+func (s *PostgresStore) GetVMByID(id string) (*WorkshopVM, error) {
 	vm := &WorkshopVM{}
 	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
-			  FROM workshop_vms WHERE id = ?`
+			  FROM workshop_vms WHERE id = $1`
 	err := s.db.QueryRow(query, id).Scan(
 		&vm.ID, &vm.WorkshopID, &vm.VMName, &vm.VMID, &vm.Zone, &vm.MachineType,
 		&vm.ExternalIP, &vm.InternalIP, &vm.TunnelURL, &vm.Status, &vm.SSHPublicKey, &vm.SSHUser,
@@ -333,26 +259,26 @@ func (s *SQLiteStore) GetVMByID(id string) (*WorkshopVM, error) {
 	return vm, err
 }
 
-func (s *SQLiteStore) UpdateVM(vm *WorkshopVM) error {
-	query := `UPDATE workshop_vms SET vm_name = ?, vm_id = ?, zone = ?, external_ip = ?, internal_ip = ?, status = ?, provisioning_completed_at = ?, provisioning_duration_ms = ?, updated_at = ? WHERE id = ?`
+func (s *PostgresStore) UpdateVM(vm *WorkshopVM) error {
+	query := `UPDATE workshop_vms SET vm_name = $1, vm_id = $2, zone = $3, external_ip = $4, internal_ip = $5, status = $6, provisioning_completed_at = $7, provisioning_duration_ms = $8, updated_at = $9 WHERE id = $10`
 	_, err := s.db.Exec(query, vm.VMName, vm.VMID, vm.Zone, vm.ExternalIP, vm.InternalIP, vm.Status,
 		vm.ProvisioningCompletedAt, vm.ProvisioningDurationMs, vm.UpdatedAt, vm.ID)
 	return err
 }
 
-func (s *SQLiteStore) UpdateVMTunnelURL(workshopID, tunnelURL string) error {
-	query := `UPDATE workshop_vms SET tunnel_url = ?, updated_at = CURRENT_TIMESTAMP WHERE workshop_id = ? AND removed_at IS NULL`
+func (s *PostgresStore) UpdateVMTunnelURL(workshopID, tunnelURL string) error {
+	query := `UPDATE workshop_vms SET tunnel_url = $1, updated_at = CURRENT_TIMESTAMP WHERE workshop_id = $2 AND removed_at IS NULL`
 	_, err := s.db.Exec(query, tunnelURL, workshopID)
 	return err
 }
 
-func (s *SQLiteStore) MarkVMRemoved(workshopID string) error {
-	query := `UPDATE workshop_vms SET status = 'removed', removed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE workshop_id = ? AND removed_at IS NULL`
+func (s *PostgresStore) MarkVMRemoved(workshopID string) error {
+	query := `UPDATE workshop_vms SET status = 'removed', removed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE workshop_id = $1 AND removed_at IS NULL`
 	_, err := s.db.Exec(query, workshopID)
 	return err
 }
 
-func (s *SQLiteStore) ListVMs() ([]*WorkshopVM, error) {
+func (s *PostgresStore) ListVMs() ([]*WorkshopVM, error) {
 	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
 			  FROM workshop_vms WHERE removed_at IS NULL ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
@@ -376,7 +302,7 @@ func (s *SQLiteStore) ListVMs() ([]*WorkshopVM, error) {
 	return vms, nil
 }
 
-func (s *SQLiteStore) ListAllVMs() ([]*WorkshopVM, error) {
+func (s *PostgresStore) ListAllVMs() ([]*WorkshopVM, error) {
 	query := `SELECT id, workshop_id, vm_name, vm_id, zone, machine_type, external_ip, internal_ip, COALESCE(tunnel_url, ''), status, ssh_public_key, ssh_user, provisioning_started_at, provisioning_completed_at, provisioning_duration_ms, removed_at, created_at, updated_at
 			  FROM workshop_vms ORDER BY created_at DESC`
 	rows, err := s.db.Query(query)
@@ -400,9 +326,9 @@ func (s *SQLiteStore) ListAllVMs() ([]*WorkshopVM, error) {
 	return vms, nil
 }
 
-func (s *SQLiteStore) GetVMPrivateKey(workshopID string) (string, error) {
+func (s *PostgresStore) GetVMPrivateKey(workshopID string) (string, error) {
 	var privateKey string
-	query := `SELECT ssh_private_key FROM workshop_vms WHERE workshop_id = ?`
+	query := `SELECT ssh_private_key FROM workshop_vms WHERE workshop_id = $1`
 	err := s.db.QueryRow(query, workshopID).Scan(&privateKey)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -412,15 +338,15 @@ func (s *SQLiteStore) GetVMPrivateKey(workshopID string) (string, error) {
 
 // -- Registration Operations --
 
-func (s *SQLiteStore) CreateRegistration(r *Registration) error {
-	query := `INSERT INTO registrations (id, access_code, email, name, workshop_id, seat_id, status, created_at, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+func (s *PostgresStore) CreateRegistration(r *Registration) error {
+	query := `INSERT INTO registrations (id, access_code, email, name, workshop_id, seat_id, status, created_at, joined_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err := s.db.Exec(query, r.ID, r.AccessCode, r.Email, r.Name, r.WorkshopID, r.SeatID, r.Status, r.CreatedAt, r.JoinedAt)
 	return err
 }
 
-func (s *SQLiteStore) GetRegistration(accessCode string) (*Registration, error) {
+func (s *PostgresStore) GetRegistration(accessCode string) (*Registration, error) {
 	r := &Registration{}
-	query := `SELECT id, access_code, email, name, workshop_id, seat_id, status, created_at, joined_at FROM registrations WHERE access_code = ?`
+	query := `SELECT id, access_code, email, name, workshop_id, seat_id, status, created_at, joined_at FROM registrations WHERE access_code = $1`
 	err := s.db.QueryRow(query, accessCode).Scan(&r.ID, &r.AccessCode, &r.Email, &r.Name, &r.WorkshopID, &r.SeatID, &r.Status, &r.CreatedAt, &r.JoinedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -428,9 +354,9 @@ func (s *SQLiteStore) GetRegistration(accessCode string) (*Registration, error) 
 	return r, err
 }
 
-func (s *SQLiteStore) GetRegistrationByEmail(workshopID, email string) (*Registration, error) {
+func (s *PostgresStore) GetRegistrationByEmail(workshopID, email string) (*Registration, error) {
 	r := &Registration{}
-	query := `SELECT id, access_code, email, name, workshop_id, seat_id, status, created_at, joined_at FROM registrations WHERE workshop_id = ? AND email = ?`
+	query := `SELECT id, access_code, email, name, workshop_id, seat_id, status, created_at, joined_at FROM registrations WHERE workshop_id = $1 AND email = $2`
 	err := s.db.QueryRow(query, workshopID, email).Scan(&r.ID, &r.AccessCode, &r.Email, &r.Name, &r.WorkshopID, &r.SeatID, &r.Status, &r.CreatedAt, &r.JoinedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -438,15 +364,15 @@ func (s *SQLiteStore) GetRegistrationByEmail(workshopID, email string) (*Registr
 	return r, err
 }
 
-func (s *SQLiteStore) UpdateRegistration(r *Registration) error {
-	query := `UPDATE registrations SET seat_id = ?, status = ?, joined_at = ? WHERE id = ?`
+func (s *PostgresStore) UpdateRegistration(r *Registration) error {
+	query := `UPDATE registrations SET seat_id = $1, status = $2, joined_at = $3 WHERE id = $4`
 	_, err := s.db.Exec(query, r.SeatID, r.Status, r.JoinedAt, r.ID)
 	return err
 }
 
-func (s *SQLiteStore) CountRegistrations(workshopID string) (int, error) {
+func (s *PostgresStore) CountRegistrations(workshopID string) (int, error) {
 	var count int
-	query := `SELECT COUNT(*) FROM registrations WHERE workshop_id = ?`
+	query := `SELECT COUNT(*) FROM registrations WHERE workshop_id = $1`
 	err := s.db.QueryRow(query, workshopID).Scan(&count)
 	return count, err
 }

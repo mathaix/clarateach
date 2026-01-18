@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output (we rebuild in Docker)
+dist/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test files
+*.test.ts
+*.test.tsx
+__tests__/
+coverage/
+
+# Logs
+*.log
+.vite/
+
+# Git
+.git/
+.gitignore
+
+# Local env files
+.env
+.env.local
+.env.*.local

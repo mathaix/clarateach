@@ -21,7 +21,7 @@ export function Dashboard() {
     name: '',
     seats: '10',
     api_key: '',
-    runtime_type: 'docker' as 'docker' | 'firecracker',
+    runtime_type: 'firecracker' as 'firecracker',
   });
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function Dashboard() {
       });
       // Close form and reset state immediately
       setShowCreateForm(false);
-      setFormData({ name: '', seats: '10', api_key: '', runtime_type: 'docker' });
+      setFormData({ name: '', seats: '10', api_key: '', runtime_type: 'firecracker' });
       setCreating(false);
       // Then refresh the list
       await loadWorkshops();
@@ -185,19 +185,8 @@ export function Dashboard() {
                   />
                   <p className="text-sm text-gray-500 mt-1">Used for Claude Code in learner workspaces</p>
                 </div>
-                <div>
-                  <Label htmlFor="runtime_type">Runtime Type</Label>
-                  <select
-                    id="runtime_type"
-                    value={formData.runtime_type}
-                    onChange={(e) => setFormData({ ...formData, runtime_type: e.target.value as 'docker' | 'firecracker' })}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value="docker">Docker (Standard)</option>
-                    <option value="firecracker">Firecracker (MicroVMs)</option>
-                  </select>
-                  <p className="text-sm text-gray-500 mt-1">Choose the container runtime for workspaces</p>
-                </div>
+                {/* Runtime type is fixed to Firecracker (MicroVMs on GCP) */}
+                <input type="hidden" name="runtime_type" value="firecracker" />
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button className="w-full sm:w-auto" type="submit" disabled={creating}>
                     {creating ? 'Creating...' : 'Create Workshop'}

@@ -3,111 +3,75 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/clarateach/backend/internal/api"
+	"github.com/clarateach/backend/internal/config"
 	"github.com/clarateach/backend/internal/provisioner"
 	"github.com/clarateach/backend/internal/store"
 	"github.com/go-chi/cors"
 )
 
 func main() {
-	// Configuration
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "./clarateach.db"
-	}
-
-	// GCP Configuration (required)
-	gcpProject := os.Getenv("GCP_PROJECT")
-	if gcpProject == "" {
-		log.Fatalf("GCP_PROJECT environment variable is required")
-	}
-	gcpZone := os.Getenv("GCP_ZONE")
-	if gcpZone == "" {
-		gcpZone = "us-central1-a"
-	}
-	gcpRegistry := os.Getenv("GCP_REGISTRY") // e.g., "us-central1-docker.pkg.dev/PROJECT/clarateach"
-	if gcpRegistry == "" {
-		log.Fatalf("GCP_REGISTRY environment variable is required")
-	}
-	useSpotVMs := os.Getenv("GCP_USE_SPOT") == "true"
-	authDisabled := os.Getenv("AUTH_DISABLED") == "true"
-
-	// Firecracker configuration (optional)
-	fcSnapshotName := os.Getenv("FC_SNAPSHOT_NAME")       // e.g., "clara2-snapshot"
-	fcAgentToken := os.Getenv("FC_AGENT_TOKEN")           // Token for agent authentication
-	backendURL := os.Getenv("BACKEND_URL")                // e.g., "https://learn.claramap.com"
-	workspaceTokenSecret := os.Getenv("WORKSPACE_TOKEN_SECRET")
-
-	// 1. Initialize Store
-	db, err := store.InitDB(dbPath)
+	// 1. Load Configuration (GCP Secret Manager -> env -> .env)
+	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to init DB: %v", err)
+		log.Fatalf("Failed to load config: %v", err)
 	}
-	st := store.NewSQLiteStore(db)
 
-	// 2. Initialize GCP Provisioner
-	log.Printf("GCP provisioning: project=%s, zone=%s, registry=%s", gcpProject, gcpZone, gcpRegistry)
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Invalid config: %v", err)
+	}
+
+	// 2. Initialize Store (PostgreSQL)
+	db, err := store.InitPostgresDB(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+	st := store.NewPostgresStore(db)
+
+	// 3. Initialize GCP Provisioner
+	log.Printf("GCP provisioning: project=%s, zone=%s, registry=%s", cfg.GCPProject, cfg.GCPZone, cfg.GCPRegistry)
 	vmProvisioner := provisioner.NewGCPProvider(provisioner.GCPConfig{
-		Project:     gcpProject,
-		Zone:        gcpZone,
-		RegistryURL: gcpRegistry,
+		Project:     cfg.GCPProject,
+		Zone:        cfg.GCPZone,
+		RegistryURL: cfg.GCPRegistry,
 	})
 
-	// 3. Initialize API Server
-	apiServer := api.NewServer(st, vmProvisioner, useSpotVMs, authDisabled)
+	// 4. Initialize API Server
+	apiServer := api.NewServer(st, vmProvisioner, cfg.GCPUseSpot)
 
-	// 4. Initialize GCP Firecracker Provisioner (optional)
-	if fcSnapshotName != "" {
-		log.Printf("Initializing GCP Firecracker provisioner with snapshot: %s", fcSnapshotName)
+	// 5. Initialize GCP Firecracker Provisioner (optional)
+	if cfg.FCSnapshotName != "" {
+		log.Printf("Initializing GCP Firecracker provisioner with snapshot: %s", cfg.FCSnapshotName)
 		fcProvisioner := provisioner.NewGCPFirecrackerProvider(provisioner.GCPFirecrackerConfig{
-			Project:              gcpProject,
-			Zone:                 gcpZone,
-			SnapshotName:         fcSnapshotName,
-			AgentToken:           fcAgentToken,
-			BackendURL:           backendURL,
-			WorkspaceTokenSecret: workspaceTokenSecret,
+			Project:              cfg.GCPProject,
+			Zone:                 cfg.GCPZone,
+			SnapshotName:         cfg.FCSnapshotName,
+			AgentToken:           cfg.FCAgentToken,
+			BackendURL:           cfg.BackendURL,
+			WorkspaceTokenSecret: cfg.WorkspaceTokenSecret,
 		})
-		apiServer.SetGCPFirecrackerProvisioner(fcProvisioner, fcSnapshotName)
+		apiServer.SetGCPFirecrackerProvisioner(fcProvisioner, cfg.FCSnapshotName)
 	}
 
-	// 5. CORS Middleware
-	// CORS_ORIGINS: comma-separated list (e.g., "https://learn.claramap.com,http://localhost:5173")
-	// Defaults to "*" for development
-	corsOrigins := os.Getenv("CORS_ORIGINS")
-	var allowedOrigins []string
-	if corsOrigins == "" || corsOrigins == "*" {
-		allowedOrigins = []string{"*"}
-	} else {
-		allowedOrigins = strings.Split(corsOrigins, ",")
-		for i, origin := range allowedOrigins {
-			allowedOrigins[i] = strings.TrimSpace(origin)
-		}
-	}
-	log.Printf("CORS allowed origins: %v", allowedOrigins)
-
+	// 6. CORS Middleware
+	log.Printf("CORS allowed origins: %v", cfg.CORSOrigins)
 	corsHandler := cors.Handler(cors.Options{
-		AllowedOrigins:   allowedOrigins,
+		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
 
-	// 6. Root Handler
+	// 7. Root Handler
 	rootHandler := corsHandler(apiServer)
 
-	log.Printf("ClaraTeach Backend running on port %s", port)
-	log.Printf("Database: %s", dbPath)
-	log.Printf("Auth Disabled: %v", authDisabled)
+	log.Printf("ClaraTeach Backend running on port %s", cfg.Port)
+	log.Printf("Database: PostgreSQL (connected)")
 
-	if err := http.ListenAndServe(":"+port, rootHandler); err != nil {
+	if err := http.ListenAndServe(":"+cfg.Port, rootHandler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

@@ -239,6 +239,17 @@ func (s *Server) handleFilesProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to connect to file server", http.StatusBadGateway)
 	}
 
+	// Strip CORS headers from upstream response (agent middleware handles CORS)
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		resp.Header.Del("Access-Control-Allow-Origin")
+		resp.Header.Del("Access-Control-Allow-Methods")
+		resp.Header.Del("Access-Control-Allow-Headers")
+		resp.Header.Del("Access-Control-Allow-Credentials")
+		resp.Header.Del("Access-Control-Max-Age")
+		resp.Header.Del("Access-Control-Expose-Headers")
+		return nil
+	}
+
 	// Modify the request
 	proxy.Director = func(req *http.Request) {
 		req.URL.Scheme = targetURL.Scheme

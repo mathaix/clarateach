@@ -13,13 +13,15 @@ Secure all ClaraTeach traffic with HTTPS using Cloudflare for the portal and Qui
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Cloudflare DNS (portal) | ⬜ Not started | `learn.claramap.com` → origin |
-| Agent VM cloudflared | ✅ Complete | Scripts ready, install in snapshot |
+| Cloudflare DNS (portal) | ⚠️ Partial | Tunnels created, need to connect cloudflared |
+| Agent VM cloudflared | ✅ Complete | Installed in snapshot, managed by Go code |
 | Backend tunnel registration | ✅ Complete | `POST /api/internal/workshops/{id}/tunnel` |
 | Backend JWT generation | ✅ Complete | Token in session response |
 | Backend VM metadata | ✅ Complete | Passes workshop-id, backend-url, workspace-token-secret |
 | Agent JWT validation | ✅ Complete | Validates query param or Authorization header |
 | Frontend token handling | ✅ Complete | Passes token to WebSocket and HTTP requests |
+| Network bridge setup | ✅ Complete | Go code in `internal/network/` (no bash scripts) |
+| Tunnel manager | ✅ Complete | Go code in `internal/tunnel/` (no bash scripts) |
 
 ## Architecture
 
@@ -63,16 +65,18 @@ Secure all ClaraTeach traffic with HTTPS using Cloudflare for the portal and Qui
 - Auto-cleanup when VM stops
 - Users never see the tunnel URLs (embedded in portal UI)
 
-**VM Boot Flow:**
-```bash
-# 1. Start quick tunnel
-cloudflared tunnel --url http://localhost:9090
-# Output: https://calm-river-1234.trycloudflare.com
-
-# 2. Report URL to backend
-curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
-  -d '{"tunnel_url": "https://calm-river-1234.trycloudflare.com"}'
+**VM Boot Flow (all in Go):**
 ```
+1. Agent starts (systemd clarateach-agent.service)
+2. internal/network.SetupBridge() creates fcbr0 bridge
+3. internal/tunnel.Manager starts cloudflared subprocess
+4. Manager captures tunnel URL from cloudflared stderr
+5. Manager POSTs tunnel URL to backend API
+6. Agent waits for tunnel registration (2 min timeout)
+7. Agent ready to receive VM creation requests
+```
+
+**Key:** The tunnel URL is registered DURING provisioning, so the backend must create the VM database record BEFORE calling `CreateVM()` to avoid the race condition.
 
 ## Token-Based WebSocket Auth
 
@@ -88,12 +92,12 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 ## Implementation Tasks
 
 ### Phase 1: Agent VM Changes
-- [x] Create `clarateach-tunnel.service` systemd unit
-- [x] Create `clarateach-tunnel.sh` startup script
-- [x] Update `clarateach-agent.service` to fetch workspace-token-secret
-- [x] Update `prepare-snapshot.sh` with cloudflared verification
+- [x] ~~Create `clarateach-tunnel.service` systemd unit~~ (replaced by Go code)
+- [x] ~~Create `clarateach-tunnel.sh` startup script~~ (replaced by Go code)
+- [x] Move network setup to Go (`internal/network/bridge_linux.go`)
+- [x] Move tunnel management to Go (`internal/tunnel/manager.go`)
 - [x] Pass metadata via GCP: workshop-id, backend-url, workspace-token-secret
-- [ ] **Deploy**: Install `cloudflared` on VM and create new snapshot
+- [x] **Deploy**: Install `cloudflared` on VM and create new snapshot (`clarateach-agent-20260117-230800`)
 
 ### Phase 2: Backend Changes
 - [x] Add `POST /api/internal/workshops/{id}/tunnel` endpoint
@@ -102,6 +106,8 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 - [x] Generate JWT in `/api/session/{code}` response
 - [x] Return tunnel URL + token in session response
 - [x] Pass `BACKEND_URL` and `WORKSPACE_TOKEN_SECRET` to provisioner
+- [x] Fix tunnel URL race condition (create VM record before provisioning)
+- [x] Keep VMs on failure for debugging (no auto-delete)
 
 ### Phase 3: Agent Auth Changes
 - [x] Extract token from WebSocket URL query param or Authorization header
@@ -121,18 +127,51 @@ curl -X POST "$BACKEND_URL/api/internal/workshops/$WORKSHOP_ID/tunnel" \
 
 | File | Purpose |
 |------|---------|
-| `backend/internal/api/server.go` | Tunnel registration, JWT generation |
-| `backend/internal/provisioner/gcp_firecracker.go` | Pass metadata to VM |
+| `backend/internal/api/server.go` | Tunnel registration, JWT generation, VM provisioning |
+| `backend/internal/provisioner/gcp_firecracker.go` | Pass metadata to VM, keeps VM on failure |
 | `backend/internal/agentapi/proxy.go` | JWT validation |
 | `backend/internal/auth/auth.go` | Workspace token functions |
 | `backend/internal/store/store.go` | TunnelURL field in WorkshopVM |
+| `backend/internal/network/bridge_linux.go` | MicroVM bridge network setup (Go, replaces bash) |
+| `backend/internal/tunnel/manager.go` | Cloudflare tunnel manager (Go, replaces bash) |
 | `backend/cmd/server/main.go` | BACKEND_URL, WORKSPACE_TOKEN_SECRET config |
-| `scripts/prepare-snapshot.sh` | Verify cloudflared installed |
-| `scripts/clarateach-agent.service` | Agent service with token secret |
-| `scripts/clarateach-tunnel.service` | Quick tunnel systemd service |
-| `scripts/clarateach-tunnel.sh` | Quick tunnel startup + URL reporting |
+| `backend/cmd/agent/main.go` | Agent entry point with network + tunnel setup |
+| `backend/scripts/create-agent-snapshot.sh` | Creates GCP snapshot with agent pre-installed |
 | `frontend/src/pages/SessionWorkspace.tsx` | Token in WebSocket URL |
 | `frontend/src/lib/api.ts` | Store token from session |
+
+## Learnings & Gotchas
+
+### 1. Tunnel URL Race Condition (Critical)
+**Problem:** The tunnel URL registration happened during `prov.CreateVM()`, but the VM database record was only created AFTER `CreateVM()` returned. The `UPDATE workshop_vms SET tunnel_url = ...` affected 0 rows because the row didn't exist yet.
+
+**Solution:** Create the VM record in the database BEFORE starting provisioning (with status "PROVISIONING"), then update it after provisioning completes. This ensures the tunnel URL can be registered during the provisioning process.
+
+### 2. Bash Scripts Are Fragile
+**Problem:** Systemd `ExecStartPre` scripts for network setup failed silently or were missing from snapshots, causing agent startup failures.
+
+**Solution:** Move all runtime logic into Go code:
+- `internal/network/bridge_linux.go` - Bridge network setup (with `bridge_stub.go` for non-Linux)
+- `internal/tunnel/manager.go` - Cloudflare tunnel spawning and URL registration
+
+Benefits:
+- Single binary deployment
+- Better error handling and logging
+- Build-time type checking
+- Easier debugging
+
+### 3. Keep VMs on Failure for Debugging
+**Problem:** Auto-deleting VMs on provisioning failure made debugging impossible.
+
+**Solution:** On failure, log the VM name and keep it running. Include instructions for accessing serial console:
+```
+gcloud compute instances get-serial-port-output VM_NAME --zone=ZONE
+```
+
+### 4. Mixed Content Blocking
+**Problem:** HTTPS frontend trying to connect to HTTP VM IP causes browser to block the request.
+
+**Solution:** Always use the tunnel URL (HTTPS) instead of direct IP. The tunnel URL is registered via the internal API and stored in the database.
 
 ## Deployment: Portal VM Setup
 
