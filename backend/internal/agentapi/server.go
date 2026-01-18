@@ -11,6 +11,7 @@ import (
 	"github.com/clarateach/backend/internal/orchestrator"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -67,6 +68,17 @@ func (s *Server) routes() {
 	s.router.Use(middleware.Recoverer)
 	s.router.Use(middleware.Timeout(60 * time.Second))
 
+	// CORS middleware for cross-origin requests from browser
+	// Note: AllowCredentials cannot be true with AllowedOrigins: ["*"]
+	// We don't need credentials (cookies) since auth is via Authorization header or URL param
+	s.router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
+
 	// Health check - no auth required
 	s.router.Get("/health", s.handleHealth)
 
@@ -90,6 +102,9 @@ func (s *Server) routes() {
 	s.router.Route("/proxy", func(r chi.Router) {
 		r.Get("/{workshopID}/{seatID}/terminal", s.handleTerminalProxy)
 		// Files proxy: both /files (directory listing) and /files/* (file operations)
+		// OPTIONS handlers for CORS preflight (CORS middleware adds headers)
+		r.Options("/{workshopID}/{seatID}/files", s.handleCORSPreflight)
+		r.Options("/{workshopID}/{seatID}/files/*", s.handleCORSPreflight)
 		r.Get("/{workshopID}/{seatID}/files", s.handleFilesProxy)
 		r.HandleFunc("/{workshopID}/{seatID}/files/*", s.handleFilesProxy)
 		r.Get("/{workshopID}/{seatID}/health", s.handleHealthProxy)
@@ -166,4 +181,10 @@ func (s *Server) getVMCount() int {
 	// Since the provider tracks VMs in a map, we'll use a workaround
 	// For now, return 0 and we'll fix this in the orchestrator
 	return len(instances)
+}
+
+// handleCORSPreflight handles OPTIONS requests for CORS preflight.
+// The CORS middleware adds the appropriate Access-Control-* headers.
+func (s *Server) handleCORSPreflight(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }

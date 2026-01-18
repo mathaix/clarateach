@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/clarateach/backend/internal/agentapi"
+	"github.com/clarateach/backend/internal/network"
 	"github.com/clarateach/backend/internal/orchestrator"
+	"github.com/clarateach/backend/internal/tunnel"
 )
 
 const (
@@ -44,6 +46,18 @@ func main() {
 		log.Printf("  Auth: disabled (no AGENT_TOKEN set)")
 	}
 
+	// Setup MicroVM bridge network (replaces setup-microvm-network.sh)
+	bridgeCfg := network.DefaultBridgeConfig()
+	if bridgeName := os.Getenv("BRIDGE_NAME"); bridgeName != "" {
+		bridgeCfg.BridgeName = bridgeName
+	}
+	if bridgeIP := os.Getenv("BRIDGE_IP"); bridgeIP != "" {
+		bridgeCfg.BridgeIP = bridgeIP
+	}
+	if err := network.SetupBridge(bridgeCfg); err != nil {
+		log.Fatalf("FATAL: Failed to setup bridge network: %v", err)
+	}
+
 	// Initialize Firecracker provider
 	fcConfig := orchestrator.DefaultConfig()
 
@@ -56,11 +70,11 @@ func main() {
 	if socketDir := os.Getenv("SOCKET_DIR"); socketDir != "" {
 		fcConfig.SocketDir = socketDir
 	}
-	if bridgeName := os.Getenv("BRIDGE_NAME"); bridgeName != "" {
-		fcConfig.BridgeName = bridgeName
+	if bridgeCfg.BridgeName != "" {
+		fcConfig.BridgeName = bridgeCfg.BridgeName
 	}
-	if bridgeIP := os.Getenv("BRIDGE_IP"); bridgeIP != "" {
-		fcConfig.BridgeIP = bridgeIP
+	if bridgeCfg.BridgeIP != "" {
+		fcConfig.BridgeIP = bridgeCfg.BridgeIP
 	}
 
 	provider, err := orchestrator.NewFirecrackerProviderWithConfig(fcConfig)
@@ -92,12 +106,53 @@ func main() {
 		}
 	}()
 
+	// Start tunnel manager (required unless DEV_MODE=true)
+	var tunnelMgr *tunnel.Manager
+	devMode := os.Getenv("DEV_MODE") == "true"
+
+	workshopID, workshopErr := getGCPMetadata("workshop-id")
+	backendURL, backendErr := getGCPMetadata("backend-url")
+
+	if devMode {
+		log.Printf("DEV_MODE=true, skipping tunnel setup")
+	} else {
+		// Production mode - tunnel is required
+		if workshopID == "" {
+			log.Fatalf("FATAL: workshop-id metadata not found (error: %v). Set DEV_MODE=true for local development.", workshopErr)
+		}
+		if backendURL == "" {
+			log.Fatalf("FATAL: backend-url metadata not found (error: %v). Set DEV_MODE=true for local development.", backendErr)
+		}
+
+		log.Printf("Starting tunnel manager for workshop %s", workshopID)
+		tunnelMgr = tunnel.NewManager(tunnel.Config{
+			WorkshopID: workshopID,
+			BackendURL: backendURL,
+			LocalPort:  9090,
+		})
+		if err := tunnelMgr.Start(); err != nil {
+			log.Fatalf("FATAL: Failed to start tunnel: %v", err)
+		}
+
+		// Wait for tunnel registration (2 minute timeout)
+		log.Printf("Waiting for tunnel registration...")
+		if err := tunnelMgr.WaitForRegistration(2 * time.Minute); err != nil {
+			log.Fatalf("FATAL: Tunnel registration failed: %v", err)
+		}
+		log.Printf("Tunnel registered successfully: %s", tunnelMgr.TunnelURL())
+	}
+
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("Shutting down server...")
+
+	// Stop tunnel manager if running
+	if tunnelMgr != nil {
+		tunnelMgr.Stop()
+	}
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

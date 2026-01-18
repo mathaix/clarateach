@@ -5,11 +5,16 @@ export function Browser() {
   const session = getWorkspaceSession();
   let baseUrl = '';
   if (session) {
-    // Check if endpoint has a path (debug proxy)
     const url = new URL(session.endpoint);
-    const basePath = url.pathname === '/' ? '' : url.pathname;
-    // Trailing slash is critical - ensures relative paths in Neko resolve correctly
-    baseUrl = `${url.origin}${basePath}/vm/${session.seat}/browser/`;
+    // Build path based on runtime type
+    if (session.runtime_type === 'firecracker' && session.workshop_id) {
+      // Firecracker proxy: /proxy/{workshopID}/{seatID}/browser/
+      baseUrl = `${url.origin}/proxy/${session.workshop_id}/${session.seat}/browser/`;
+    } else {
+      // Docker workspace: /vm/{seat}/browser/
+      const basePath = url.pathname === '/' ? '' : url.pathname;
+      baseUrl = `${url.origin}${basePath}/vm/${session.seat}/browser/`;
+    }
   }
   const tokenParam = session?.token ? `?token=${encodeURIComponent(session.token)}` : '';
   const browserUrl = `${baseUrl}${tokenParam}`;

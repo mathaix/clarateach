@@ -186,6 +186,7 @@ export interface SessionResponse {
   status: 'pending' | 'ready';
   message?: string;
   endpoint?: string;
+  token?: string;  // JWT token for workspace WebSocket authentication
   seat?: number;
   name?: string;
   workshop_id?: string;

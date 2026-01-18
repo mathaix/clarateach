@@ -127,9 +127,12 @@ echo "=== Verifying Essential Files ==="
 ESSENTIAL_FILES=(
     "/usr/local/bin/agent"
     "/usr/local/bin/firecracker"
+    "/usr/local/bin/cloudflared"
+    "/usr/local/bin/clarateach-tunnel.sh"
     "/var/lib/clarateach/images/vmlinux"
     "/var/lib/clarateach/images/rootfs.ext4"
     "/etc/systemd/system/clarateach-agent.service"
+    "/etc/systemd/system/clarateach-tunnel.service"
 )
 
 for file in "${ESSENTIAL_FILES[@]}"; do

@@ -26,16 +26,15 @@ type Server struct {
 	firecrackerProvisioner    *provisioner.FirecrackerProvisioner    // Local Firecracker
 	gcpFirecrackerProvisioner *provisioner.GCPFirecrackerProvider    // GCP + Firecracker
 	useSpotVMs                bool
-	authDisabled              bool
+	fcSnapshotName            string // Firecracker snapshot name for visibility
 }
 
-func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool, authDisabled bool) *Server {
+func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool) *Server {
 	s := &Server{
-		store:        store,
-		provisioner:  prov,
-		router:       chi.NewRouter(),
-		useSpotVMs:   useSpotVMs,
-		authDisabled: authDisabled,
+		store:       store,
+		provisioner: prov,
+		router:      chi.NewRouter(),
+		useSpotVMs:  useSpotVMs,
 	}
 
 	// Initialize local Firecracker provisioner (optional - may fail if not on Linux with KVM)
@@ -52,9 +51,10 @@ func NewServer(store store.Store, prov provisioner.Provisioner, useSpotVMs bool,
 }
 
 // SetGCPFirecrackerProvisioner sets the GCP Firecracker provisioner
-func (s *Server) SetGCPFirecrackerProvisioner(prov *provisioner.GCPFirecrackerProvider) {
+func (s *Server) SetGCPFirecrackerProvisioner(prov *provisioner.GCPFirecrackerProvider, snapshotName string) {
 	s.gcpFirecrackerProvisioner = prov
-	log.Printf("GCP Firecracker provisioner initialized")
+	s.fcSnapshotName = snapshotName
+	log.Printf("GCP Firecracker provisioner initialized with snapshot: %s", snapshotName)
 }
 
 // getProvisioner returns the appropriate provisioner based on runtime type
@@ -87,7 +87,13 @@ func (s *Server) routes() {
 	}))
 
 	s.router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		resp := map[string]interface{}{
+			"status": "ok",
+		}
+		if s.fcSnapshotName != "" {
+			resp["fc_snapshot"] = s.fcSnapshotName
+		}
+		json.NewEncoder(w).Encode(resp)
 	})
 
 	s.router.Route("/api", func(r chi.Router) {
@@ -111,9 +117,7 @@ func (s *Server) routes() {
 
 		// Instructor routes (protected)
 		r.Route("/workshops", func(r chi.Router) {
-			if !s.authDisabled {
-				r.Use(auth.AuthMiddleware(s.store))
-			}
+			r.Use(auth.AuthMiddleware(s.store))
 			r.Get("/", s.listWorkshops)
 			r.Post("/", s.createWorkshop)
 			r.Route("/{id}", func(r chi.Router) {
@@ -126,15 +130,18 @@ func (s *Server) routes() {
 
 		// Admin API for VM management (protected, admin only)
 		r.Route("/admin", func(r chi.Router) {
-			if !s.authDisabled {
-				r.Use(auth.AuthMiddleware(s.store))
-				r.Use(auth.AdminMiddleware)
-			}
+			r.Use(auth.AuthMiddleware(s.store))
+			r.Use(auth.AdminMiddleware)
 			r.Get("/overview", s.adminOverview)
 			r.Get("/vms", s.listVMs)
 			r.Get("/vms/{workshop_id}", s.getVMDetails)
 			r.Get("/vms/{workshop_id}/ssh-key", s.getSSHKey)
 			r.Get("/users", s.listUsers)
+		})
+
+		// Internal API for agent VMs (no auth - called from within GCP)
+		r.Route("/internal", func(r chi.Router) {
+			r.Post("/workshops/{id}/tunnel", s.registerTunnel)
 		})
 	})
 
@@ -241,11 +248,32 @@ func (s *Server) createWorkshop(w http.ResponseWriter, r *http.Request) {
 		vmConfig := provisioner.DefaultConfig(workshop.ID, workshop.Seats)
 		vmConfig.Spot = s.useSpotVMs
 		vmConfig.SSHPublicKey = keyPair.PublicKey
-		vmConfig.AuthDisabled = s.authDisabled
 		vmConfig.RuntimeType = workshop.RuntimeType
 
 		// Track provisioning time
 		provisioningStartedAt := time.Now()
+
+		// Create VM record in database BEFORE provisioning starts
+		// This allows the tunnel URL to be registered during provisioning
+		workshopVM := &store.WorkshopVM{
+			ID:                    generateID(8),
+			WorkshopID:           workshop.ID,
+			VMName:               fmt.Sprintf("clarateach-fc-%s", workshop.ID), // Will be updated after creation
+			MachineType:          vmConfig.MachineType,
+			Status:               "PROVISIONING",
+			SSHPublicKey:         keyPair.PublicKey,
+			SSHPrivateKey:        keyPair.PrivateKey,
+			SSHUser:              "clarateach",
+			ProvisioningStartedAt: &provisioningStartedAt,
+			CreatedAt:            time.Now(),
+			UpdatedAt:            time.Now(),
+		}
+
+		if err := s.store.CreateVM(workshopVM); err != nil {
+			log.Printf("Failed to create VM record: %v", err)
+			s.store.UpdateWorkshopStatus(workshop.ID, "error")
+			return
+		}
 
 		// Provision VM with background context (not tied to HTTP request)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -265,29 +293,19 @@ func (s *Server) createWorkshop(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("VM created: %s (IP: %s) in %dms", vmInstance.Name, vmInstance.ExternalIP, provisioningDurationMs)
 
-		// Store VM info in database
-		workshopVM := &store.WorkshopVM{
-			ID:                      generateID(8),
-			WorkshopID:              workshop.ID,
-			VMName:                  vmInstance.Name,
-			VMID:                    vmInstance.ID,
-			Zone:                    vmInstance.Zone,
-			MachineType:             vmConfig.MachineType,
-			ExternalIP:              vmInstance.ExternalIP,
-			InternalIP:              vmInstance.InternalIP,
-			Status:                  vmInstance.Status,
-			SSHPublicKey:            keyPair.PublicKey,
-			SSHPrivateKey:           keyPair.PrivateKey,
-			SSHUser:                 "clarateach",
-			ProvisioningStartedAt:   &provisioningStartedAt,
-			ProvisioningCompletedAt: &provisioningCompletedAt,
-			ProvisioningDurationMs:  provisioningDurationMs,
-			CreatedAt:               time.Now(),
-			UpdatedAt:               time.Now(),
-		}
+		// Update VM record with final details (tunnel_url may have been set during provisioning)
+		workshopVM.VMName = vmInstance.Name
+		workshopVM.VMID = vmInstance.ID
+		workshopVM.Zone = vmInstance.Zone
+		workshopVM.ExternalIP = vmInstance.ExternalIP
+		workshopVM.InternalIP = vmInstance.InternalIP
+		workshopVM.Status = vmInstance.Status
+		workshopVM.ProvisioningCompletedAt = &provisioningCompletedAt
+		workshopVM.ProvisioningDurationMs = provisioningDurationMs
+		workshopVM.UpdatedAt = time.Now()
 
-		if err := s.store.CreateVM(workshopVM); err != nil {
-			log.Printf("Failed to save VM info: %v", err)
+		if err := s.store.UpdateVM(workshopVM); err != nil {
+			log.Printf("Failed to update VM info: %v", err)
 		}
 
 		// Update sessions to ready (containers run inside VM via startup script)
@@ -470,7 +488,6 @@ func (s *Server) startWorkshop(w http.ResponseWriter, r *http.Request) {
 	vmConfig := provisioner.DefaultConfig(id, workshop.Seats)
 	vmConfig.Spot = s.useSpotVMs
 	vmConfig.SSHPublicKey = keyPair.PublicKey
-	vmConfig.AuthDisabled = s.authDisabled
 	vmConfig.RuntimeType = workshop.RuntimeType
 
 	// Track provisioning time
@@ -840,23 +857,81 @@ func (s *Server) getSessionByCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build endpoint URL based on runtime type
+	// Build endpoint URL based on runtime type and tunnel availability
 	var endpoint string
 	if workshop.RuntimeType == "firecracker" {
-		// Firecracker agent runs on port 9090
-		endpoint = fmt.Sprintf("http://%s:9090", vm.ExternalIP)
+		// Prefer tunnel URL if available (HTTPS via Cloudflare)
+		if vm.TunnelURL != "" {
+			endpoint = vm.TunnelURL
+		} else {
+			// Fallback to direct IP (HTTP) - only for development
+			endpoint = fmt.Sprintf("http://%s:9090", vm.ExternalIP)
+		}
 	} else {
 		// Docker workspace server runs on port 8080
 		endpoint = fmt.Sprintf("http://%s:8080", vm.ExternalIP)
 	}
 
+	// Generate workspace token for WebSocket authentication
+	token, err := auth.GenerateWorkspaceToken(workshop.ID, *registration.SeatID)
+	if err != nil {
+		log.Printf("Failed to generate workspace token: %v", err)
+		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":       "ready",
 		"endpoint":     endpoint,
+		"token":        token,
 		"seat":         *registration.SeatID,
 		"name":         registration.Name,
 		"workshop_id":  workshop.ID,
 		"runtime_type": workshop.RuntimeType,
+	})
+}
+
+// ================== Internal API Handlers ==================
+
+func (s *Server) registerTunnel(w http.ResponseWriter, r *http.Request) {
+	workshopID := chi.URLParam(r, "id")
+
+	var req struct {
+		TunnelURL string `json:"tunnel_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TunnelURL == "" {
+		http.Error(w, "tunnel_url is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify workshop exists
+	workshop, err := s.store.GetWorkshop(workshopID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if workshop == nil {
+		http.Error(w, "Workshop not found", http.StatusNotFound)
+		return
+	}
+
+	// Update tunnel URL
+	if err := s.store.UpdateVMTunnelURL(workshopID, req.TunnelURL); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Tunnel URL registered for workshop %s: %s", workshopID, req.TunnelURL)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":    true,
+		"tunnel_url": req.TunnelURL,
 	})
 }
 

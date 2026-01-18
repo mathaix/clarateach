@@ -1,0 +1,15 @@
+[Unit]
+Description=ClaraTeach Quick Tunnel (Cloudflare)
+After=network-online.target clarateach-agent.service
+Wants=network-online.target
+Requires=clarateach-agent.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/clarateach-tunnel.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

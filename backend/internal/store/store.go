@@ -1,10 +1,7 @@
 package store
 
 import (
-	"database/sql"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // User represents an instructor or admin
@@ -39,6 +36,7 @@ type WorkshopVM struct {
 	MachineType            string     `json:"machine_type"`
 	ExternalIP             string     `json:"external_ip"`
 	InternalIP             string     `json:"internal_ip"`
+	TunnelURL              string     `json:"tunnel_url"`               // Cloudflare Quick Tunnel URL (e.g., https://xxx.trycloudflare.com)
 	Status                 string     `json:"status"`                   // provisioning, running, stopping, terminated, removed
 	SSHPublicKey           string     `json:"ssh_public_key"`           // OpenSSH format
 	SSHPrivateKey          string     `json:"-"`                        // Never return in JSON - PEM format
@@ -113,6 +111,7 @@ type Store interface {
 	GetVM(workshopID string) (*WorkshopVM, error)            // Gets active (non-removed) VM for workshop
 	GetVMByID(id string) (*WorkshopVM, error)
 	UpdateVM(vm *WorkshopVM) error
+	UpdateVMTunnelURL(workshopID, tunnelURL string) error    // Updates tunnel URL for a workshop's VM
 	MarkVMRemoved(workshopID string) error                   // Soft delete - marks VM as removed
 	ListVMs() ([]*WorkshopVM, error)                         // Lists active VMs only
 	ListAllVMs() ([]*WorkshopVM, error)                      // Lists all VMs including removed
@@ -126,107 +125,3 @@ type Store interface {
 	CountRegistrations(workshopID string) (int, error)
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS users (
-	id TEXT PRIMARY KEY,
-	email TEXT NOT NULL UNIQUE,
-	password_hash TEXT NOT NULL,
-	name TEXT NOT NULL,
-	role TEXT NOT NULL DEFAULT 'instructor',
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
-CREATE TABLE IF NOT EXISTS workshops (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	code TEXT NOT NULL UNIQUE,
-	seats INTEGER NOT NULL,
-	api_key TEXT NOT NULL,
-	runtime_type TEXT NOT NULL DEFAULT 'docker',
-	status TEXT NOT NULL,
-	owner_id TEXT,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY(owner_id) REFERENCES users(id)
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-	odehash TEXT PRIMARY KEY,
-	workshop_id TEXT NOT NULL,
-	seat_id INTEGER NOT NULL,
-	name TEXT,
-	status TEXT DEFAULT 'provisioning',
-	container_id TEXT,
-	ip TEXT,
-	joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY(workshop_id) REFERENCES workshops(id),
-	UNIQUE(workshop_id, seat_id)
-);
-
-CREATE TABLE IF NOT EXISTS workshop_vms (
-	id TEXT PRIMARY KEY,
-	workshop_id TEXT NOT NULL,
-	vm_name TEXT NOT NULL,
-	vm_id TEXT,
-	zone TEXT NOT NULL,
-	machine_type TEXT NOT NULL,
-	external_ip TEXT,
-	internal_ip TEXT,
-	status TEXT NOT NULL DEFAULT 'provisioning',
-	ssh_public_key TEXT,
-	ssh_private_key TEXT,
-	ssh_user TEXT DEFAULT 'clarateach',
-	provisioning_started_at DATETIME,
-	provisioning_completed_at DATETIME,
-	provisioning_duration_ms INTEGER DEFAULT 0,
-	removed_at DATETIME,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY(workshop_id) REFERENCES workshops(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_workshop_vms_workshop_id ON workshop_vms(workshop_id);
-CREATE INDEX IF NOT EXISTS idx_workshop_vms_status ON workshop_vms(status);
-
-CREATE TABLE IF NOT EXISTS registrations (
-	id TEXT PRIMARY KEY,
-	access_code TEXT NOT NULL UNIQUE,
-	email TEXT NOT NULL,
-	name TEXT NOT NULL,
-	workshop_id TEXT NOT NULL,
-	seat_id INTEGER,
-	status TEXT NOT NULL DEFAULT 'registered',
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	joined_at DATETIME,
-	FOREIGN KEY(workshop_id) REFERENCES workshops(id),
-	UNIQUE(workshop_id, email)
-);
-
-CREATE INDEX IF NOT EXISTS idx_registrations_access_code ON registrations(access_code);
-CREATE INDEX IF NOT EXISTS idx_registrations_workshop_id ON registrations(workshop_id);
-`
-
-func InitDB(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := db.Exec(schema); err != nil {
-		return nil, err
-	}
-
-	// Run migrations for existing databases
-	migrations := []string{
-		// Add owner_id column to workshops if it doesn't exist
-		`ALTER TABLE workshops ADD COLUMN owner_id TEXT`,
-	}
-
-	for _, migration := range migrations {
-		// Ignore errors for migrations (column may already exist)
-		db.Exec(migration)
-	}
-
-	return db, nil
-}

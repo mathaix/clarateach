@@ -15,17 +15,24 @@ fi
 export GCP_PROJECT="${GCP_PROJECT:-clarateach}"
 export GCP_ZONE="${GCP_ZONE:-us-central1-b}"
 export GCP_REGISTRY="${GCP_REGISTRY:-us-central1-docker.pkg.dev/clarateach/clarateach}"
-export AUTH_DISABLED="${AUTH_DISABLED:-true}"
 export PORT="${PORT:-8080}"
 
+# Database (PostgreSQL/Neon)
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "ERROR: DATABASE_URL is required"
+  echo "Set it in .env or export DATABASE_URL=postgresql://..."
+  exit 1
+fi
+
 # Firecracker provisioner config
-export FC_SNAPSHOT_NAME="${FC_SNAPSHOT_NAME:-clarateach-agent-20260116-204056}"
+export FC_SNAPSHOT_NAME="${FC_SNAPSHOT_NAME:-clara2-snapshot-20260117-auth}"
+export WORKSPACE_TOKEN_SECRET="${WORKSPACE_TOKEN_SECRET:-clarateach-dev-secret-2024}"
 
 echo "Starting backend on port $PORT..."
 echo "  GCP_PROJECT=$GCP_PROJECT"
 echo "  GCP_ZONE=$GCP_ZONE"
 echo "  FC_SNAPSHOT_NAME=$FC_SNAPSHOT_NAME"
-echo "  AUTH_DISABLED=$AUTH_DISABLED"
+echo "  DATABASE_URL=<configured>"
 echo ""
 
 cd "$BACKEND_DIR"

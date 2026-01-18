@@ -39,7 +39,7 @@ export function SessionWorkspace() {
         setWorkspaceSession({
           endpoint: response.endpoint!,
           seat: response.seat!,
-          token: '', // No token needed with registration flow
+          token: response.token, // JWT token for WebSocket authentication
           name: response.name,
           workshop_id: response.workshop_id,
           runtime_type: response.runtime_type,
